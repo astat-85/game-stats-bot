@@ -30,7 +30,6 @@ BASE_DIR = Path(__file__).parent
 print(f"📁 Директория: {BASE_DIR}")
 
 # ========== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ==========
-# Bothost.ru будет подставлять их через панель управления
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "").strip()
 TARGET_CHAT_ID = os.getenv("TARGET_CHAT_ID", "").strip()
@@ -106,14 +105,12 @@ try:
     from aiogram.exceptions import TelegramBadRequest
     from aiogram.types.error_event import ErrorEvent
 
-    # Совместимость с aiogram 2.x и 3.x
     try:
         from aiogram.enums import ParseMode
         PARSE_MODE = ParseMode.HTML
     except ImportError:
         PARSE_MODE = 'HTML'
 
-    # Определяем версию и инициализируем бота
     import aiogram
     if aiogram.__version__.startswith('3'):
         try:
@@ -130,7 +127,7 @@ except ImportError as e:
     print(f"❌ Ошибка импорта aiogram: {e}")
     sys.exit(1)
 
-# ========== PSUTIL (опционально) ==========
+# ========== PSUTIL ==========
 try:
     import psutil
     PSUTIL_AVAILABLE = True
@@ -234,7 +231,6 @@ class Database:
             print(f"📁 Создана новая БД: {self.db_path}")
 
     def _connect(self):
-        """Подключение к БД"""
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=10)
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
@@ -242,7 +238,6 @@ class Database:
         self._create_tables()
 
     def _optimize(self):
-        """Оптимизация SQLite"""
         try:
             self._execute("PRAGMA journal_mode=WAL")
             self._execute("PRAGMA synchronous=NORMAL")
@@ -254,7 +249,6 @@ class Database:
             logger.error(f"Ошибка оптимизации БД: {e}")
 
     def _create_tables(self):
-        """Создание таблиц"""
         self._execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -275,7 +269,6 @@ class Database:
         )
         ''')
 
-        # Индексы
         for idx in [
             "CREATE INDEX IF NOT EXISTS idx_user_id ON users(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_game_nickname ON users(game_nickname)",
@@ -289,7 +282,6 @@ class Database:
         self.conn.commit()
 
     def _execute(self, query: str, params: tuple = None):
-        """Безопасное выполнение запроса"""
         with self.lock:
             try:
                 if params:
@@ -302,18 +294,15 @@ class Database:
                 raise
 
     def _validate_field(self, field: str) -> bool:
-        """Проверка имени поля"""
         return field in VALID_DB_FIELDS
 
     def invalidate_cache(self):
-        """Сброс кэша"""
         with self.cache_lock:
             self.stats_cache = {}
             self.user_cache.clear()
             self.last_cache_update = 0
 
     def get_user_accounts_cached(self, user_id: int) -> List[Dict]:
-        """Кэшированные аккаунты пользователя"""
         cache_key = f"user_{user_id}"
 
         with self.cache_lock:
@@ -331,7 +320,6 @@ class Database:
 
     @retry_on_db_lock()
     def get_user_accounts(self, user_id: int) -> List[Dict]:
-        """Получить аккаунты пользователя"""
         try:
             self._execute("""
             SELECT id, game_nickname, power, bm, pl1, pl2, pl3,
@@ -347,7 +335,6 @@ class Database:
 
     @retry_on_db_lock()
     def get_account_by_id(self, account_id: int) -> Optional[Dict]:
-        """Получить аккаунт по ID"""
         try:
             self._execute("SELECT * FROM users WHERE id = ?", (account_id,))
             row = self.cursor.fetchone()
@@ -357,7 +344,6 @@ class Database:
             return None
 
     def is_nickname_taken(self, user_id: int, nickname: str, exclude_id: int = None) -> bool:
-        """Проверка занятости ника"""
         try:
             nickname = nickname.strip().lower()
             query = "SELECT id FROM users WHERE user_id = ? AND LOWER(TRIM(game_nickname)) = ?"
@@ -377,9 +363,7 @@ class Database:
     def create_or_update_account(self, user_id: int, username: str,
                                   game_nickname: str, field_key: str = None,
                                   value: str = None) -> Optional[Dict]:
-        """Создание или обновление аккаунта"""
         try:
-            # Проверяем существование
             self._execute(
                 "SELECT id, game_nickname FROM users WHERE user_id = ? AND game_nickname = ?",
                 (user_id, game_nickname)
@@ -396,7 +380,6 @@ class Database:
                         logger.error(f"Неверное поле: {db_field}")
                         return None
 
-                    # Обновление поля
                     self._execute(f"""
                     UPDATE users
                     SET {db_field} = ?,
@@ -405,7 +388,6 @@ class Database:
                     WHERE id = ?
                     """, (value, username, account_id))
 
-                    # Если меняем ник
                     if field_key == "nick" and value != old_nick:
                         self._execute("""
                         UPDATE users
@@ -413,7 +395,6 @@ class Database:
                         WHERE id = ?
                         """, (value, account_id))
             else:
-                # Создание нового аккаунта
                 if field_key and value is not None:
                     db_field = FIELD_DB_MAP.get(field_key, field_key)
                     if not self._validate_field(db_field):
@@ -450,7 +431,6 @@ class Database:
 
     @retry_on_db_lock()
     def delete_account(self, account_id: int) -> bool:
-        """Удаление аккаунта"""
         try:
             self._execute("DELETE FROM users WHERE id = ?", (account_id,))
             self.conn.commit()
@@ -462,7 +442,6 @@ class Database:
 
     @retry_on_db_lock()
     def get_all_accounts(self) -> List[Dict]:
-        """Все аккаунты для админа"""
         try:
             self._execute("""
             SELECT
@@ -486,7 +465,6 @@ class Database:
             return []
 
     def get_stats(self) -> Dict[str, Any]:
-        """Статистика с кэшированием"""
         now = time.time()
 
         with self.cache_lock:
@@ -516,7 +494,6 @@ class Database:
             return {"unique_users": 0, "total_accounts": 0, "avg_accounts_per_user": 0}
 
     def create_backup(self, filename: str = None) -> Optional[str]:
-        """Создание резервной копии"""
         try:
             if not filename:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -530,7 +507,6 @@ class Database:
 
             logger.info(f"✅ Бэкап: {filepath}")
 
-            # Оставляем только 10 последних бэкапов
             backups = sorted(BACKUP_DIR.glob("backup_*.db"))
             if len(backups) > 10:
                 for old in backups[:-10]:
@@ -542,7 +518,6 @@ class Database:
             return None
 
     def export_to_csv(self, filename: str = None) -> Optional[str]:
-        """Экспорт данных в CSV"""
         try:
             if not filename:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -562,7 +537,6 @@ class Database:
                 ])
 
                 for i, acc in enumerate(accounts, 1):
-                    # Безопасное получение даты
                     updated = acc.get('updated_at', '')
                     time_str = '--:--:--'
                     date_str = '--.--.----'
@@ -575,7 +549,6 @@ class Database:
                         except:
                             pass
 
-                    # ФОРМАТИРУЕМ ЗНАЧЕНИЯ ДЛЯ ПЛАЦЕВ
                     bm = acc.get('bm', '')
                     if bm and bm != '—' and ',' not in bm:
                         bm = f"{bm},0"
@@ -615,26 +588,18 @@ class Database:
             logger.error(f"❌ Ошибка экспорта: {e}")
             return None
 
-    def restore_from_backup(self) -> bool:
-        """Восстановление из бэкапа"""
+    def restore_from_backup(self, backup_path: Path) -> bool:
         try:
-            backups = sorted(BACKUP_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
-
-            if not backups:
-                return False
-
-            latest = backups[0]
-
-            if not latest.exists() or latest.stat().st_size == 0:
+            if not backup_path.exists() or backup_path.stat().st_size == 0:
                 return False
 
             self.close()
-            shutil.copy2(latest, self.db_path)
+            shutil.copy2(backup_path, self.db_path)
             self._connect()
             self._create_tables()
 
             if self.check_integrity():
-                logger.info(f"✅ БД восстановлена из {latest}")
+                logger.info(f"✅ БД восстановлена из {backup_path}")
                 return True
 
             return False
@@ -643,7 +608,6 @@ class Database:
             return False
 
     def check_integrity(self) -> bool:
-        """Проверка целостности"""
         try:
             self._execute("PRAGMA integrity_check")
             return self.cursor.fetchone()[0] == "ok"
@@ -651,7 +615,6 @@ class Database:
             return False
 
     def maybe_vacuum(self):
-        """Очистка раз в неделю"""
         if (datetime.now() - self.last_vacuum).days >= 7:
             try:
                 self._execute("VACUUM")
@@ -661,8 +624,7 @@ class Database:
             except Exception as e:
                 logger.error(f"❌ Ошибка VACUUM: {e}")
 
-    def cleanup_old_files(self, days: int = 7):
-        """Очистка старых файлов"""
+    def cleanup_old_files(self, days: int = 14):
         try:
             cutoff = datetime.now().timestamp() - (days * 24 * 3600)
 
@@ -677,7 +639,6 @@ class Database:
             logger.error(f"Ошибка очистки: {e}")
 
     def close(self):
-        """Закрытие соединения"""
         try:
             with self.lock:
                 self.conn.commit()
@@ -685,7 +646,6 @@ class Database:
         except:
             pass
 
-# Инициализация БД
 db = Database()
 
 # ========== FSM ==========
@@ -705,7 +665,6 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 def get_main_kb(user_id: int) -> ReplyKeyboardMarkup:
-    """Главная клавиатура меню"""
     kb = [
         [KeyboardButton(text="📊 Мои аккаунты"), KeyboardButton(text="📤 Отправить в группу")]
     ]
@@ -714,7 +673,6 @@ def get_main_kb(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_numeric_kb(decimal: bool = True) -> ReplyKeyboardMarkup:
-    """Клавиатура для ввода чисел с кнопками"""
     kb = [
         [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
         [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
@@ -725,7 +683,6 @@ def get_numeric_kb(decimal: bool = True) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_cancel_kb() -> ReplyKeyboardMarkup:
-    """Клавиатура только с кнопкой отмены"""
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="🚫 Отмена")]],
         resize_keyboard=True
@@ -784,13 +741,20 @@ def get_admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Таблица", callback_data="admin_table_1")],
         [InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="admin_export")],
-        [InlineKeyboardButton(text="💾 Бэкап", callback_data="admin_backup")],
+        [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")],
         [InlineKeyboardButton(text="🔍 Поиск", callback_data="admin_search")],
         [InlineKeyboardButton(text="🗑️ Пакетное удаление", callback_data="admin_batch")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="🧹 Очистка", callback_data="admin_cleanup")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_refresh")],
         [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")]
+    ])
+
+def get_db_management_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💾 Сохранить бэкап", callback_data="db_backup")],
+        [InlineKeyboardButton(text="📥 Восстановить из бэкапа", callback_data="db_restore_menu")],
+        [InlineKeyboardButton(text="🧹 Очистка старых файлов (14 дней)", callback_data="admin_cleanup")],
+        [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_back")]
     ])
 
 def get_confirm_delete_kb(account_id: int, page: int = 1) -> InlineKeyboardMarkup:
@@ -803,7 +767,6 @@ def get_confirm_delete_kb(account_id: int, page: int = 1) -> InlineKeyboardMarku
 
 # ========== ФОРМАТТЕРЫ ==========
 def format_pl_value(value: str) -> str:
-    """Форматирование значения плацдарма с выравниванием вправо"""
     if not value or value == '—':
         return '  —'
     try:
@@ -816,7 +779,6 @@ def format_pl_value(value: str) -> str:
         return html.escape(str(value)).rjust(4) if value else '  —'
 
 def format_field_value(value: str) -> str:
-    """Форматирование числового поля"""
     if not value or value == '—':
         return '  —'
     try:
@@ -825,7 +787,6 @@ def format_field_value(value: str) -> str:
         return html.escape(str(value)).rjust(4) if value else '  —'
 
 def format_accounts_table(accounts: List[Dict], start: int = 0) -> str:
-    """Форматирование списка аккаунтов в виде таблицы"""
     text = "<code>\n"
     for i, acc in enumerate(accounts, start + 1):
         nick = acc.get('game_nickname', acc.get('nick', '—'))
@@ -836,19 +797,18 @@ def format_accounts_table(accounts: List[Dict], start: int = 0) -> str:
             nick = nick[:17] + '...'
 
         text += f"{i:2d}. {nick}\n"
-        text += f"    ⚡️{format_field_value(acc.get('power', '—'))}  "
-        text += f"⚔️{format_field_value(acc.get('bm', '—'))}  "
-        text += f"📍1-{format_pl_value(acc.get('pl1', '—'))}  "
-        text += f"📍2-{format_pl_value(acc.get('pl2', '—'))}  "
-        text += f"📍3-{format_pl_value(acc.get('pl3', '—'))}  "
-        text += f"🐉{format_field_value(acc.get('dragon', '—'))}  "
-        text += f"🏗️{format_field_value(acc.get('buffs_stands', '—'))}  "
+        text += f"    ⚡️{format_field_value(acc.get('power', '—'))} "
+        text += f"⚔️{format_field_value(acc.get('bm', '—'))} "
+        text += f"📍1-{format_pl_value(acc.get('pl1', '—'))} "
+        text += f"📍2-{format_pl_value(acc.get('pl2', '—'))} "
+        text += f"📍3-{format_pl_value(acc.get('pl3', '—'))} "
+        text += f"🐉{format_field_value(acc.get('dragon', '—'))} "
+        text += f"🏗️{format_field_value(acc.get('buffs_stands', '—'))} "
         text += f"🔬{format_field_value(acc.get('buffs_research', '—'))}\n\n"
     text += "</code>"
     return text
 
 def format_account_data(acc: Dict) -> str:
-    """Форматирование данных аккаунта"""
     if not acc:
         return "❌ Аккаунт не найден"
     nick = acc.get('game_nickname', 'Без имени')
@@ -862,7 +822,6 @@ def format_account_data(acc: Dict) -> str:
 
 # ========== SAFE SEND ==========
 async def safe_send(obj, text: str, **kwargs):
-    """Безопасная отправка сообщений"""
     MAX_LEN = 4096
 
     try:
@@ -977,8 +936,7 @@ async def admin_cmd(message: Message):
 @router.message(F.text == "📊 Мои аккаунты")
 async def my_accounts(message: Message):
     user_id = message.from_user.id
-    # ПРИНУДИТЕЛЬНО сбрасываем кэш для этого пользователя
-    accounts = db.get_user_accounts(user_id)  # ← ИСПОЛЬЗУЕМ ПРЯМОЙ ЗАПРОС, НЕ КЭШ!
+    accounts = db.get_user_accounts(user_id)
 
     if not accounts:
         await message.answer(
@@ -1035,7 +993,6 @@ async def step_start(callback: CallbackQuery, state: FSMContext):
 
     steps = [k for k in FIELD_FULL_NAMES if k != "nick"]
 
-    # Показываем подробную инструкцию по использованию клавиатуры
     keyboard_guide = """
 <b>📱 ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ КЛАВИАТУРЫ:</b>
 
@@ -1057,7 +1014,6 @@ async def step_start(callback: CallbackQuery, state: FSMContext):
         f"{keyboard_guide}"
     )
 
-    # Даем пользователю время прочитать инструкцию
     await asyncio.sleep(3)
 
     await state.update_data(
@@ -1065,7 +1021,7 @@ async def step_start(callback: CallbackQuery, state: FSMContext):
         step_index=0,
         step_steps=steps,
         step_data={},
-        step_temp="",  # Для накопления числа
+        step_temp="",
         show_task=None
     )
 
@@ -1092,7 +1048,6 @@ async def step_next(msg_or_cb, state: FSMContext):
     name = FIELD_FULL_NAMES.get(field, field)
     current = account.get(FIELD_DB_MAP.get(field, field), '')
 
-    # Краткая подсказка для текущего шага
     hint = ""
     if field in ["bm", "pl1", "pl2", "pl3"]:
         hint = "💡 Можно вводить дробные числа через запятую (например: 12,5)"
@@ -1113,7 +1068,6 @@ async def step_next(msg_or_cb, state: FSMContext):
     else:
         await msg_or_cb.message.edit_text(text)
 
-    # Выбираем клавиатуру в зависимости от типа поля
     if field in ["bm", "pl1", "pl2", "pl3"]:
         kb = get_numeric_kb(decimal=True)
         prompt = f"📝 Введите число для поля «{name}» (можно с запятой):"
@@ -1130,42 +1084,29 @@ async def step_next(msg_or_cb, state: FSMContext):
 
 @router.message(EditState.step_by_step)
 async def step_input(message: Message, state: FSMContext):
-    """Обработка ввода в пошаговом режиме"""
-    print(f"\n🔴 STEP_INPUT: нажата кнопка '{message.text}'")
-    print(f"📊 Состояние: {await state.get_state()}")
-
     data = await state.get_data()
     field = data.get("step_field")
     account_id = data.get("step_account")
     step_data = data.get("step_data", {})
     step_temp = data.get("step_temp", "")
 
-    print(f"📦 Данные: field={field}, account_id={account_id}, temp='{step_temp}'")
-
-    # Получаем имя поля для отображения
     field_name = FIELD_FULL_NAMES.get(field, field)
 
-    # ========== ОБРАБОТКА КНОПОК ==========
-
-    # 1. КНОПКА "🚫 Отмена" - полная отмена пошагового заполнения
     if message.text == "🚫 Отмена":
         await message.answer("❌ Действие отменено", reply_markup=get_main_kb(message.from_user.id))
         await state.clear()
         return
 
-    # 2. КНОПКА "🏁 Завершить" - досрочно завершить пошаговое заполнение
     if message.text == "🏁 Завершить":
         await step_finish(message, state, early=True)
         return
 
-    # 3. КНОПКА "⏭ Пропустить" - пропустить текущее поле
     if message.text == "⏭ Пропустить":
         await message.answer(f"⏭ Поле «{field_name}» пропущено")
         await state.update_data(step_index=data.get("step_index", 0) + 1, step_temp="")
         await step_next(message, state)
         return
 
-    # 4. НАКОПЛЕНИЕ ЧИСЛА - цифры и запятая
     if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
         if message.text == ",":
             if "," not in step_temp:
@@ -1173,25 +1114,21 @@ async def step_input(message: Message, state: FSMContext):
         else:
             step_temp += message.text
         await state.update_data(step_temp=step_temp)
-        # Отменяем предыдущую задачу показа, если она была
         current_task = data.get("show_task")
         if current_task:
             current_task.cancel()
 
-        # Создаем новую задачу для показа через 0.5 секунды
         async def show_value():
             await asyncio.sleep(0.5)
-            # Проверяем, не изменилось ли значение
             new_data = await state.get_data()
             new_temp = new_data.get("step_temp", "")
-            if new_temp == step_temp:  # Значение не изменилось - пользователь закончил ввод
+            if new_temp == step_temp:
                 await message.answer(f"📝 Текущее значение: {step_temp}")
 
         task = asyncio.create_task(show_value())
         await state.update_data(show_task=task)
         return
 
-    # 5. КНОПКА "⌫" - удалить последний символ
     if message.text == "⌫":
         step_temp = step_temp[:-1] if step_temp else ""
         await state.update_data(step_temp=step_temp)
@@ -1201,7 +1138,6 @@ async def step_input(message: Message, state: FSMContext):
             await message.answer(f"📝 Значение очищено")
         return
 
-    # 6. КНОПКА "✅ Готово" - завершить набор числа
     if message.text == "✅ Готово":
         if step_temp:
             value = step_temp
@@ -1210,22 +1146,15 @@ async def step_input(message: Message, state: FSMContext):
             await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
             return
     else:
-        # 7. ОБЫЧНЫЙ ТЕКСТ - ручной ввод
         value = message.text.strip()
 
-    # ========== ВАЛИДАЦИЯ ЗНАЧЕНИЯ ==========
-
-    # Проверяем, не пустое ли значение
     if not value:
         await message.answer("❌ Значение не может быть пустым. Введите число или нажмите «⏭ Пропустить»")
         return
 
-    # Валидация для числовых полей
     if field in ["power", "bm", "dragon", "stands", "research", "pl1", "pl2", "pl3"]:
-        # Заменяем точку на запятую
         value = value.replace('.', ',')
 
-        # Для полей с дробной частью (БМ и плацдармы)
         if field in ["bm", "pl1", "pl2", "pl3"]:
             parts = value.split(',')
             if len(parts) > 2:
@@ -1247,7 +1176,6 @@ async def step_input(message: Message, state: FSMContext):
                 )
                 return
         else:
-            # Для целочисленных полей
             if not value.replace(',', '').isdigit():
                 await message.answer(
                     "❌ Введите целое число",
@@ -1256,11 +1184,9 @@ async def step_input(message: Message, state: FSMContext):
                 return
             value = value.replace(',', '')
 
-    # ========== СОХРАНЕНИЕ ЗНАЧЕНИЯ ==========
     step_data[field] = value
     await message.answer(f"✅ {field_name}: {value}")
 
-    # Переход к следующему шагу
     await state.update_data(
         step_data=step_data,
         step_index=data.get("step_index", 0) + 1,
@@ -1269,7 +1195,6 @@ async def step_input(message: Message, state: FSMContext):
     await step_next(message, state)
 
 async def step_finish(msg_or_cb, state: FSMContext, early=False):
-    """Завершение пошагового заполнения"""
     data = await state.get_data()
     account_id = data.get("step_account")
     step_data = data.get("step_data", {})
@@ -1284,7 +1209,6 @@ async def step_finish(msg_or_cb, state: FSMContext, early=False):
     username = msg_or_cb.from_user.username or f"user_{user_id}"
     updated = []
 
-    # Сохраняем все заполненные поля
     for field, value in step_data.items():
         if value and value.strip():
             db.create_or_update_account(
@@ -1296,7 +1220,6 @@ async def step_finish(msg_or_cb, state: FSMContext, early=False):
             )
             updated.append(FIELD_FULL_NAMES.get(field, field))
 
-    # Формируем текст результата
     if early:
         text = "🏁 <b>ПОШАГОВОЕ ЗАПОЛНЕНИЕ ПРЕРВАНО</b>"
     else:
@@ -1316,7 +1239,6 @@ async def step_finish(msg_or_cb, state: FSMContext, early=False):
     else:
         text += f"ℹ️ Ни одно поле не было изменено\n"
 
-    # Отправляем результат
     if isinstance(msg_or_cb, Message):
         await msg_or_cb.answer(text, reply_markup=get_main_kb(user_id))
     else:
@@ -1333,10 +1255,6 @@ async def step_finish(msg_or_cb, state: FSMContext, early=False):
 # ========== ОБРАБОТКА ВВОДА ==========
 @router.message(EditState.waiting_field_value)
 async def process_input(message: Message, state: FSMContext):
-    """Обработка ввода в обычном режиме редактирования"""
-    print(f"\n🔵 PROCESS_INPUT: нажата кнопка '{message.text}'")
-    print(f"📊 Состояние: {await state.get_state()}")
-
     user_id = message.from_user.id
     username = message.from_user.username or f"user_{user_id}"
     data = await state.get_data()
@@ -1345,30 +1263,22 @@ async def process_input(message: Message, state: FSMContext):
     account_id = data.get("account_id")
     temp = data.get("temp", "")
 
-    print(f"📦 Данные: field={field}, account_id={account_id}, temp='{temp}'")
-
-    # ========== ОБРАБОТКА КНОПОК ==========
-
-    # 1. КНОПКА "🚫 Отмена" - полная отмена
     if message.text == "🚫 Отмена":
         await message.answer("❌ Действие отменено", reply_markup=get_main_kb(user_id))
         await state.clear()
         return
 
-    # 2. КНОПКА "🏁 Завершить" - завершить редактирование
     if message.text == "🏁 Завершить":
         await message.answer("🏁 Редактирование завершено", reply_markup=get_main_kb(user_id))
         await state.clear()
         return
 
-    # 3. КНОПКА "⏭ Пропустить" - пропустить текущее поле
     if message.text == "⏭ Пропустить":
         field_name = FIELD_FULL_NAMES.get(field, field)
         await message.answer(f"⏭ Поле «{field_name}» пропущено", reply_markup=get_main_kb(user_id))
         await state.clear()
         return
 
-    # 4. НАКОПЛЕНИЕ ЧИСЛА - цифры и запятая
     if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
         if message.text == ",":
             if "," not in temp:
@@ -1376,25 +1286,21 @@ async def process_input(message: Message, state: FSMContext):
         else:
             temp += message.text
         await state.update_data(temp=temp)
-        # Отменяем предыдущую задачу показа, если она была
         current_task = data.get("show_task")
         if current_task:
             current_task.cancel()
 
-        # Создаем новую задачу для показа через 0.5 секунды
         async def show_value():
             await asyncio.sleep(0.5)
-            # Проверяем, не изменилось ли значение
             new_data = await state.get_data()
             new_temp = new_data.get("temp", "")
-            if new_temp == temp:  # Значение не изменилось - пользователь закончил ввод
+            if new_temp == temp:
                 await message.answer(f"📝 Текущее значение: {temp}")
 
         task = asyncio.create_task(show_value())
         await state.update_data(show_task=task)
         return
 
-    # 5. КНОПКА "⌫" - удалить последний символ
     if message.text == "⌫":
         temp = temp[:-1] if temp else ""
         await state.update_data(temp=temp)
@@ -1404,7 +1310,6 @@ async def process_input(message: Message, state: FSMContext):
             await message.answer(f"📝 Значение очищено")
         return
 
-    # 6. КНОПКА "✅ Готово" - завершить набор числа
     if message.text == "✅ Готово":
         if temp:
             value = temp
@@ -1413,14 +1318,10 @@ async def process_input(message: Message, state: FSMContext):
             await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
             return
     else:
-        # 7. ОБЫЧНЫЙ ТЕКСТ - ручной ввод
         value = message.text.strip()
-
-    # ========== ВАЛИДАЦИЯ ЗНАЧЕНИЯ ==========
 
     field_name = FIELD_FULL_NAMES.get(field, field)
 
-    # Проверка для поля "nick"
     if field == "nick":
         if not value:
             await message.answer("❌ Ник не может быть пустым", reply_markup=get_cancel_kb())
@@ -1434,7 +1335,6 @@ async def process_input(message: Message, state: FSMContext):
             await message.answer(f"❌ Ник '{value}' уже используется", reply_markup=get_cancel_kb())
             return
 
-        # Создание нового аккаунта
         if new:
             acc = db.create_or_update_account(user_id, username, value)
             if acc:
@@ -1447,7 +1347,6 @@ async def process_input(message: Message, state: FSMContext):
                 await message.answer("❌ Ошибка создания", reply_markup=get_cancel_kb())
             return
 
-        # Изменение ника
         if account_id:
             acc = db.get_account_by_id(account_id)
             if acc:
@@ -1457,13 +1356,12 @@ async def process_input(message: Message, state: FSMContext):
                     await state.clear()
                     return
 
-                # ВАЖНО: передаем старый ник как game_nickname, а новый как value
                 db.create_or_update_account(
                     user_id, 
                     username, 
-                    old,  # Передаем СТАРЫЙ ник как game_nickname
+                    old,
                     "nick", 
-                    value  # Передаем НОВЫЙ ник как value
+                    value
                 )
                 await message.answer(
                     f"✅ Ник изменен: {old} → {value}",
@@ -1472,13 +1370,10 @@ async def process_input(message: Message, state: FSMContext):
                 await state.clear()
             return
 
-    # Валидация чисел
     if field in ["power", "bm", "dragon", "stands", "research", "pl1", "pl2", "pl3"]:
         if value:
-            # Заменяем точку на запятую
             value = value.replace('.', ',')
 
-            # Для полей с дробной частью (БМ и плацдармы)
             if field in ["bm", "pl1", "pl2", "pl3"]:
                 parts = value.split(',')
                 if len(parts) > 2:
@@ -1500,7 +1395,6 @@ async def process_input(message: Message, state: FSMContext):
                     )
                     return
             else:
-                # Для целочисленных полей
                 if not value.replace(',', '').isdigit():
                     await message.answer(
                         "❌ Введите целое число",
@@ -1509,7 +1403,6 @@ async def process_input(message: Message, state: FSMContext):
                     return
                 value = value.replace(',', '')
 
-    # ========== СОХРАНЕНИЕ ЗНАЧЕНИЯ ==========
     if account_id:
         account = db.get_account_by_id(account_id)
         if account:
@@ -1525,18 +1418,10 @@ async def process_input(message: Message, state: FSMContext):
 # ========== ОБЩИЙ ХЕНДЛЕР ==========
 @router.message(F.chat.type == "private")
 async def any_message(message: Message, state: FSMContext):
-    """Обрабатывает ЛЮБОЕ сообщение в личке, если бот еще не запущен"""
-    print(f"\n🟢 ANY_MESSAGE: получено '{message.text}'")
-    print(f"📊 Состояние: {await state.get_state()}")
-
-    # Проверяем, нет ли активного состояния
     current_state = await state.get_state()
     if current_state is not None:
-        # Если есть активное состояние - НЕ обрабатываем в any_message
-        print(f"⏭️ Пропускаем - есть активное состояние: {current_state}")
         return
 
-    # Игнорируем команды, которые уже обработаны выше
     if message.text in ["📊 Мои аккаунты", "📤 Отправить в группу", "👑 Админ-панель"]:
         return
 
@@ -1546,10 +1431,8 @@ async def any_message(message: Message, state: FSMContext):
         await message.answer("⏳ Слишком много запросов")
         return
 
-    # Проверяем, есть ли у пользователя аккаунты
     accounts = db.get_user_accounts_cached(user_id)
 
-    # Если пользователь уже пользовался ботом - показываем меню
     if accounts:
         await message.answer(
             "🏠 <b>Главное меню</b>\n\nВыберите действие:",
@@ -1557,7 +1440,6 @@ async def any_message(message: Message, state: FSMContext):
         )
         return
 
-    # Если пользователь новый - предлагаем начать
     if message.text != "/start":
         await message.answer(
             "👋 <b>Привет! Я бот для сбора игровых данных.</b>\n\n"
@@ -1574,11 +1456,9 @@ async def force_start(callback: CallbackQuery):
 
 @router.callback_query(F.data == "my_accounts")
 async def my_accounts_cb(callback: CallbackQuery):
-    """Обработка нажатия на кнопку 'Мои аккаунты' из сообщения об удалении"""
     await callback.answer()
 
     user_id = callback.from_user.id
-    # Используем прямой запрос к БД, а не кэш
     accounts = db.get_user_accounts(user_id)
 
     if not accounts:
@@ -1748,14 +1628,10 @@ async def confirm_delete(callback: CallbackQuery):
         return
 
     if db.delete_account(account_id):
-        # ПРИНУДИТЕЛЬНО сбрасываем кэш
         db.invalidate_cache()
-
-        # Проверяем, остались ли еще аккаунты у пользователя
         remaining_accounts = db.get_user_accounts(callback.from_user.id)
 
         if remaining_accounts:
-            # Если аккаунты остались - показываем кнопку "Мои аккаунты"
             await callback.message.edit_text(
                 f"✅ Аккаунт {account['game_nickname']} удален",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1764,7 +1640,6 @@ async def confirm_delete(callback: CallbackQuery):
                 ])
             )
         else:
-            # Если аккаунтов не осталось - показываем кнопку "Создать"
             await callback.message.edit_text(
                 f"✅ Аккаунт {account['game_nickname']} удален",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1805,16 +1680,13 @@ async def send_account(callback: CallbackQuery):
         val = account.get(db_field, '')
 
         if val and val != '—':
-            # Для плацев (bm, pl1, pl2, pl3) используем форматирование
             if key in ["bm", "pl1", "pl2", "pl3"]:
-                # Форматируем так же, как в таблице
                 if ',' in val:
                     formatted_val = val
                 else:
                     formatted_val = f"{val},0"
                 text += f"<b>{name}:</b> {formatted_val}\n"
             else:
-                # Для остальных полей - как есть
                 text += f"<b>{name}:</b> {val}\n"
 
     text += f"\n👤 От: @{callback.from_user.username or 'пользователь'}"
@@ -1864,10 +1736,202 @@ async def cancel_cb(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+# ========== НОВЫЕ АДМИН ХЕНДЛЕРЫ ==========
+@router.callback_query(F.data == "db_management")
+async def db_management_menu(callback: CallbackQuery):
+    """Меню управления базой данных"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    stats = db.get_stats()
+    try:
+        db_size = db.db_path.stat().st_size / 1024
+        backups = len(list(BACKUP_DIR.glob("backup_*.db")))
+        exports = len(list(EXPORT_DIR.glob("export_*.csv")))
+    except:
+        db_size = backups = exports = 0
+    
+    text = f"""🗄️ <b>Управление базой данных</b>
+
+📊 <b>Текущее состояние:</b>
+• Размер БД: {db_size:.1f} KB
+• Пользователей: {stats['unique_users']}
+• Аккаунтов: {stats['total_accounts']}
+• Бэкапов: {backups}
+• Экспортов: {exports}
+
+<b>Доступные действия:</b>
+💾 <b>Сохранить бэкап</b> - создать копию базы данных
+📥 <b>Восстановить</b> - загрузить ранее сохраненный бэкап
+🧹 <b>Очистка</b> - удалить файлы старше 14 дней
+
+<i>📤 Экспорт CSV находится в главном меню админки для быстрого доступа</i>
+"""
+    
+    await callback.message.edit_text(text, reply_markup=get_db_management_kb())
+    await callback.answer()
+
+@router.callback_query(F.data == "db_backup")
+async def db_backup_handler(callback: CallbackQuery):
+    """Создание бэкапа базы данных"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    await callback.message.edit_text("🔄 Создание бэкапа...")
+    
+    path = await asyncio.to_thread(db.create_backup)
+    
+    if path and Path(path).exists():
+        try:
+            await bot.send_document(
+                chat_id=callback.from_user.id,
+                document=FSInputFile(path),
+                caption=f"💾 Бэкап от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+            )
+            await db_management_menu(callback)
+        except Exception as e:
+            await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=get_db_management_kb())
+    else:
+        await callback.message.edit_text("❌ Ошибка создания бэкапа", reply_markup=get_db_management_kb())
+    
+    await callback.answer()
+
+@router.callback_query(F.data == "db_restore_menu")
+async def db_restore_menu(callback: CallbackQuery):
+    """Меню выбора бэкапа для восстановления"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    backups = sorted(BACKUP_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
+    
+    if not backups:
+        await callback.message.edit_text(
+            "❌ Нет доступных бэкапов",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")]
+            ])
+        )
+        await callback.answer()
+        return
+    
+    buttons = []
+    for i, backup in enumerate(backups[:5]):
+        try:
+            mtime = backup.stat().st_mtime
+            date_str = datetime.fromtimestamp(mtime).strftime('%d.%m.%Y %H:%M')
+        except:
+            date_str = backup.name.replace('backup_', '').replace('.db', '')
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📅 {date_str} ({(backup.stat().st_size / 1024):.1f} KB)",
+                callback_data=f"db_restore_{backup.name}"
+            )
+        ])
+    
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")])
+    
+    await callback.message.edit_text(
+        "📥 <b>Восстановление из бэкапа</b>\n\n"
+        "Выберите бэкап для восстановления:\n"
+        "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("db_restore_"))
+async def db_restore_handler(callback: CallbackQuery):
+    """Восстановление из выбранного бэкапа"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    backup_name = callback.data.replace("db_restore_", "")
+    backup_path = BACKUP_DIR / backup_name
+    
+    if not backup_path.exists():
+        await callback.message.edit_text(
+            "❌ Файл бэкапа не найден",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_restore_menu")]
+            ])
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.edit_text(
+        f"⚠️ <b>Подтверждение восстановления</b>\n\n"
+        f"Файл: {backup_name}\n"
+        f"Размер: {(backup_path.stat().st_size / 1024):.1f} KB\n\n"
+        f"<b>ВНИМАНИЕ!</b> Текущая база данных будет полностью заменена!\n\n"
+        f"Вы уверены?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да, восстановить", callback_data=f"db_restore_confirm_{backup_name}"),
+                InlineKeyboardButton(text="❌ Нет, отмена", callback_data="db_restore_menu")
+            ]
+        ])
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("db_restore_confirm_"))
+async def db_restore_confirm(callback: CallbackQuery):
+    """Подтвержденное восстановление бэкапа"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    backup_name = callback.data.replace("db_restore_confirm_", "")
+    backup_path = BACKUP_DIR / backup_name
+    
+    await callback.message.edit_text("🔄 Восстановление...")
+    
+    try:
+        current_backup = f"before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        shutil.copy2(db.db_path, BACKUP_DIR / current_backup)
+        
+        db.close()
+        shutil.copy2(backup_path, db.db_path)
+        db._connect()
+        
+        if db.check_integrity():
+            await callback.message.edit_text(
+                f"✅ База данных успешно восстановлена из {backup_name}\n\n"
+                f"🔄 Перезапустите бота в панели Bothost",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")]
+                ])
+            )
+        else:
+            shutil.copy2(BACKUP_DIR / current_backup, db.db_path)
+            db._connect()
+            await callback.message.edit_text(
+                "❌ Ошибка: восстановленный файл поврежден. База возвращена к предыдущему состоянию.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")]
+                ])
+            )
+            
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка восстановления: {e}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_restore_menu")]
+            ])
+        )
+        try:
+            db._connect()
+        except:
+            pass
+    
+    await callback.answer()
+
 # ========== АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data.startswith("admin_table_"))
 async def admin_table(callback: CallbackQuery):
-    """Показывает таблицу участников"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -1890,16 +1954,13 @@ async def admin_table(callback: CallbackQuery):
     start = (page - 1) * per_page
     end = min(start + per_page, len(accounts))
 
-    # Формируем таблицу
     text = f"📋 <b>Таблица участников</b> (стр. {page}/{total})\n\n"
     text += format_accounts_table(accounts[start:end], start)
 
-    # Добавляем инструкцию
     text += "\n<i>🔽 Нажмите кнопку ниже для удаления аккаунта</i>"
 
     buttons = []
 
-    # Пагинация
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_table_{page-1}"))
@@ -1909,7 +1970,6 @@ async def admin_table(callback: CallbackQuery):
     if nav:
         buttons.append(nav)
 
-    # Кнопка для выбора аккаунта на удаление
     buttons.append([
         InlineKeyboardButton(
             text="🗑️ Удалить аккаунт",
@@ -1917,7 +1977,6 @@ async def admin_table(callback: CallbackQuery):
         )
     ])
 
-    # Остальные кнопки админ-панели
     buttons.append([
         InlineKeyboardButton(text="🔄 Обновить", callback_data=f"admin_table_{page}"),
         InlineKeyboardButton(text="📤 CSV", callback_data="admin_export")
@@ -1933,7 +1992,6 @@ async def admin_table(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("confirm_del_"))
 async def confirm_del(callback: CallbackQuery):
-    """Подтверждение удаления аккаунта админом"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -1966,7 +2024,6 @@ async def confirm_del(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_batch")
 async def admin_batch(callback: CallbackQuery, state: FSMContext):
-    """Пакетное удаление аккаунтов"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -1984,7 +2041,6 @@ async def admin_batch(callback: CallbackQuery, state: FSMContext):
 
 @router.message(EditState.waiting_batch_delete)
 async def process_batch(message: Message, state: FSMContext):
-    """Обработка ввода ID для пакетного удаления"""
     if not is_admin(message.from_user.id):
         await state.clear()
         return
@@ -2029,7 +2085,6 @@ async def process_batch(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "admin_show_delete_menu")
 async def admin_show_delete_menu(callback: CallbackQuery):
-    """Показывает меню выбора аккаунта для удаления"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -2040,7 +2095,6 @@ async def admin_show_delete_menu(callback: CallbackQuery):
         await callback.answer("📋 Нет аккаунтов для удаления", show_alert=True)
         return
 
-    # Получаем текущую страницу из callback data (если есть)
     try:
         page = int(callback.data.split("_")[4]) if len(callback.data.split("_")) > 4 else 1
     except:
@@ -2056,7 +2110,6 @@ async def admin_show_delete_menu(callback: CallbackQuery):
 
     buttons = []
 
-    # Кнопки с аккаунтами
     for i, acc in enumerate(accounts[start:end], start + 1):
         nick = acc.get('nick', '—')
         if len(nick) > 30:
@@ -2068,7 +2121,6 @@ async def admin_show_delete_menu(callback: CallbackQuery):
             )
         ])
 
-    # Пагинация для меню удаления
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_show_delete_menu_page_{page-1}"))
@@ -2086,10 +2138,8 @@ async def admin_show_delete_menu(callback: CallbackQuery):
     )
     await callback.answer()
 
-# Добавляем обработчик для пагинации в меню удаления
 @router.callback_query(F.data.startswith("admin_show_delete_menu_page_"))
 async def admin_show_delete_menu_page(callback: CallbackQuery):
-    """Обработка пагинации в меню удаления"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -2099,7 +2149,6 @@ async def admin_show_delete_menu_page(callback: CallbackQuery):
     except:
         page = 1
 
-    # Создаем новый callback data для admin_show_delete_menu с параметром страницы
     new_callback = type('obj', (object,), {
         'from_user': callback.from_user,
         'data': f"admin_show_delete_menu_page_{page}",
@@ -2111,7 +2160,6 @@ async def admin_show_delete_menu_page(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_export")
 async def admin_export(callback: CallbackQuery):
-    """Экспорт данных в CSV"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -2127,7 +2175,12 @@ async def admin_export(callback: CallbackQuery):
                 document=FSInputFile(path),
                 caption=f"📤 Экспорт {datetime.now().strftime('%d.%m.%Y %H:%M')}"
             )
-            await callback.message.delete()
+            stats = db.get_stats()
+            text = f"""👑 <b>Админ-панель</b>
+
+👥 Пользователей: {stats['unique_users']}
+🎮 Аккаунтов: {stats['total_accounts']}"""
+            await callback.message.edit_text(text, reply_markup=get_admin_kb())
         except Exception as e:
             await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=get_admin_kb())
     else:
@@ -2135,35 +2188,8 @@ async def admin_export(callback: CallbackQuery):
 
     await callback.answer()
 
-@router.callback_query(F.data == "admin_backup")
-async def admin_backup(callback: CallbackQuery):
-    """Создание бэкапа базы данных"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("🚫 Доступ запрещен", show_alert=True)
-        return
-
-    await callback.message.edit_text("🔄 Создание бэкапа...")
-
-    path = await asyncio.to_thread(db.create_backup)
-
-    if path and Path(path).exists():
-        try:
-            await bot.send_document(
-                chat_id=callback.from_user.id,
-                document=FSInputFile(path),
-                caption=f"💾 Бэкап {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-            )
-            await callback.message.delete()
-        except Exception as e:
-            await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=get_admin_kb())
-    else:
-        await callback.message.edit_text("❌ Ошибка создания бэкапа", reply_markup=get_admin_kb())
-
-    await callback.answer()
-
 @router.callback_query(F.data == "admin_search")
 async def admin_search(callback: CallbackQuery, state: FSMContext):
-    """Поиск аккаунтов"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -2179,7 +2205,6 @@ async def admin_search(callback: CallbackQuery, state: FSMContext):
 
 @router.message(EditState.waiting_search_query)
 async def process_search(message: Message, state: FSMContext):
-    """Обработка поискового запроса"""
     if not is_admin(message.from_user.id):
         await state.clear()
         return
@@ -2230,7 +2255,6 @@ async def process_search(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
-    """Статистика бота"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -2268,12 +2292,11 @@ async def admin_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_cleanup")
 async def admin_cleanup(callback: CallbackQuery):
-    """Очистка старых файлов"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
-    db.cleanup_old_files(7)
+    db.cleanup_old_files(14)
 
     exports = len(list(EXPORT_DIR.glob("export_*.csv")))
     backups = len(list(BACKUP_DIR.glob("backup_*.db")))
@@ -2281,14 +2304,16 @@ async def admin_cleanup(callback: CallbackQuery):
     await callback.message.edit_text(
         f"🧹 <b>Очистка завершена</b>\n\n"
         f"📤 Экспортов: {exports}\n"
-        f"💾 Бэкапов: {backups}",
-        reply_markup=get_admin_kb()
+        f"💾 Бэкапов: {backups}\n\n"
+        f"<i>Удалены файлы старше 14 дней</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")]
+        ])
     )
     await callback.answer("✅ Готово")
 
 @router.callback_query(F.data == "admin_refresh")
 async def admin_refresh(callback: CallbackQuery):
-    """Обновление админ-панели"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -2304,7 +2329,6 @@ async def admin_refresh(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_back")
 async def admin_back(callback: CallbackQuery):
-    """Возврат в админ-панель"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -2320,12 +2344,10 @@ async def admin_back(callback: CallbackQuery):
 
 @router.callback_query(F.data == "noop")
 async def noop(callback: CallbackQuery):
-    """Заглушка для неактивных кнопок"""
     await callback.answer()
 
 # ========== ЗАПУСК ==========
 async def main():
-    """Основная функция запуска"""
     print("=" * 50)
     print("🚀 ЗАПУСК БОТА НА BOTHOST.RU")
     print("=" * 50)
@@ -2346,10 +2368,8 @@ async def main():
     print(f"📊 Пользователей: {stats['unique_users']}, Аккаунтов: {stats['total_accounts']}")
     print("-" * 50)
 
-    # Очистка старых файлов при запуске
-    await asyncio.to_thread(db.cleanup_old_files, 7)
+    await asyncio.to_thread(db.cleanup_old_files, 14)
 
-    # Запуск в режиме polling (Bothost сам держит бота)
     print("📡 Режим: Polling")
     
     try:
