@@ -1889,6 +1889,13 @@ async def db_management_menu(callback: CallbackQuery):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
     
+    print(f"\n📋 ОТКРЫТО МЕНЮ УПРАВЛЕНИЯ БД")
+    print(f"   Кнопки в меню:")
+    kb = get_db_management_kb()
+    for row in kb.inline_keyboard:
+        for btn in row:
+            print(f"   - {btn.text} : {btn.callback_data}")
+    
     stats = db.get_stats()
     try:
         db_size = db.db_path.stat().st_size / 1024
@@ -2575,4 +2582,5 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
