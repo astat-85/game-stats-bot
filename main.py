@@ -1922,7 +1922,7 @@ async def db_management_menu(callback: CallbackQuery):
 <i>📤 Экспорт CSV находится в главном меню админки для быстрого доступа</i>
 """
     
-    await callback.message.edit_text(text, reply_markup=get_db_management_kb())
+    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
 @router.callback_query(F.data == "db_backup")
@@ -2096,7 +2096,6 @@ async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
         return
     
     await callback.answer()
-    
     await callback.message.delete()
     
     await callback.message.answer(
@@ -2112,7 +2111,6 @@ async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
     )
     
     await state.set_state(EditState.waiting_for_backup)
-
 # ========== АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data.startswith("admin_table_"))
 async def admin_table(callback: CallbackQuery):
@@ -2582,5 +2580,6 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
