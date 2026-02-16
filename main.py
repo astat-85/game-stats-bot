@@ -659,6 +659,7 @@ class EditState(StatesGroup):
     step_by_step = State()
     waiting_search_query = State()
     waiting_batch_delete = State()
+    waiting_for_backup = State()  # Состояние ожидания бэкапа
 
 # ========== КЛАВИАТУРЫ ==========
 def is_admin(user_id: int) -> bool:
@@ -752,8 +753,8 @@ def get_admin_kb() -> InlineKeyboardMarkup:
 def get_db_management_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💾 Сохранить бэкап", callback_data="db_backup")],
-        [InlineKeyboardButton(text="📥 Из бэкапов на сервере", callback_data="db_restore_menu")],
-        [InlineKeyboardButton(text="📤 Загрузить с телефона/ПК", callback_data="db_upload")],
+        [InlineKeyboardButton(text="📥 Восстановить из бэкапа", callback_data="db_restore_menu")],
+        [InlineKeyboardButton(text="📤 Загрузить с ПК", callback_data="db_restore_pc")],
         [InlineKeyboardButton(text="🧹 Очистка (14 дней)", callback_data="admin_cleanup")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")]
     ])
@@ -902,6 +903,7 @@ async def help_cmd(message: Message):
 /cancel - Отмена
 /myid - Мой ID
 /admin - Админка
+/restore - Восстановить БД из файла
 
 <b>Кнопки:</b>
 📊 Мои аккаунты - управление
@@ -933,19 +935,22 @@ async def admin_cmd(message: Message):
 🎮 Аккаунтов: {stats['total_accounts']}"""
     await message.answer(text, reply_markup=get_admin_kb())
 
-@router.message(Command("upload_backup"))
-async def upload_backup_cmd(message: Message):
-    """Команда для загрузки бэкапа с устройства"""
+@router.message(Command("restore"))
+async def restore_command(message: Message, state: FSMContext):
+    """Команда для восстановления из бэкапа"""
     if not is_admin(message.from_user.id):
         await message.answer("🚫 Только для админов")
         return
     
     await message.answer(
         "📤 Отправьте файл бэкапа (.db)\n\n"
-        "1️⃣ Найдите файл на телефоне/ПК\n"
-        "2️⃣ Отправьте его как документ\n"
-        "3️⃣ Бот автоматически восстановит данные"
+        "1️⃣ Нажмите на скрепку 📎\n"
+        "2️⃣ Выберите 'Документ'\n"
+        "3️⃣ Найдите файл .db на вашем устройстве\n"
+        "4️⃣ Отправьте его"
     )
+    # Устанавливаем состояние ожидания файла
+    await state.set_state(EditState.waiting_for_backup)
 
 # ========== ОСНОВНЫЕ КНОПКИ ==========
 @router.message(F.text == "📊 Мои аккаунты")
@@ -1430,6 +1435,83 @@ async def process_input(message: Message, state: FSMContext):
 
     await state.clear()
 
+# ========== ОБРАБОТКА ФАЙЛОВ ==========
+@router.message(EditState.waiting_for_backup, F.document)
+async def handle_backup_file(message: Message, state: FSMContext):
+    """Обработка загруженного файла бэкапа"""
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+    
+    # Проверяем расширение
+    if not message.document.file_name.endswith('.db'):
+        await message.answer("❌ Нужен файл с расширением .db")
+        await state.clear()
+        return
+    
+    await message.answer("🔄 Загружаю и восстанавливаю бэкап...")
+    
+    try:
+        # Скачиваем файл
+        file = await bot.get_file(message.document.file_id)
+        downloaded_file = await bot.download_file(file.file_path)
+        
+        # Сохраняем во временный файл
+        temp_path = BACKUP_DIR / f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        with open(temp_path, 'wb') as f:
+            f.write(downloaded_file.getvalue())
+        
+        # Создаем бэкап текущей БД
+        current_backup = BACKUP_DIR / f"before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        shutil.copy2(db.db_path, current_backup)
+        
+        # Закрываем текущее соединение
+        db.close()
+        
+        # Копируем загруженный файл как новую БД
+        shutil.copy2(temp_path, db.db_path)
+        
+        # Переподключаемся
+        db._connect()
+        
+        # Проверяем целостность
+        if db.check_integrity():
+            # Проверяем, есть ли данные
+            accounts = db.get_all_accounts()
+            if accounts:
+                await message.answer(
+                    f"✅ База данных восстановлена!\n\n"
+                    f"📊 Загружено {len(accounts)} аккаунтов\n"
+                    f"💾 Предыдущая БД сохранена как: {current_backup.name}\n\n"
+                    f"👑 Нажмите /admin для проверки"
+                )
+            else:
+                # Если нет данных - откатываем
+                shutil.copy2(current_backup, db.db_path)
+                db._connect()
+                await message.answer(
+                    "❌ В загруженном файле нет данных.\n"
+                    "База возвращена к предыдущему состоянию."
+                )
+        else:
+            # Если файл поврежден - откатываем
+            shutil.copy2(current_backup, db.db_path)
+            db._connect()
+            await message.answer(
+                "❌ Загруженный файл поврежден.\n"
+                "База возвращена к предыдущему состоянию."
+            )
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+        # Пытаемся восстановить соединение
+        try:
+            db._connect()
+        except:
+            pass
+    finally:
+        await state.clear()
+
 # ========== ОБЩИЙ ХЕНДЛЕР ==========
 @router.message(F.chat.type == "private")
 async def any_message(message: Message, state: FSMContext):
@@ -1463,53 +1545,6 @@ async def any_message(message: Message, state: FSMContext):
                 [InlineKeyboardButton(text="🚀 Запустить бота", callback_data="force_start")]
             ])
         )
-
-# ========== ОБРАБОТКА ЗАГРУЖЕННЫХ ФАЙЛОВ ==========
-@router.message(F.document)
-async def handle_backup_upload(message: Message):
-    """Обработка загруженного файла бэкапа"""
-    if not is_admin(message.from_user.id):
-        return
-    
-    # Проверяем расширение
-    if not message.document.file_name.endswith('.db'):
-        await message.answer("❌ Нужен файл .db")
-        return
-    
-    await message.answer("🔄 Загружаю бэкап...")
-    
-    try:
-        # Скачиваем файл с Telegram на сервер
-        file = await bot.get_file(message.document.file_id)
-        downloaded_file = await bot.download_file(file.file_path)
-        
-        # Сохраняем во временный файл
-        temp_path = BACKUP_DIR / f"uploaded_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        with open(temp_path, 'wb') as f:
-            f.write(downloaded_file.getvalue())
-        
-        # Создаем бэкап текущей БД
-        current_backup = BACKUP_DIR / f"before_upload_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        shutil.copy2(db.db_path, current_backup)
-        
-        # Восстанавливаем из загруженного файла
-        db.close()
-        shutil.copy2(temp_path, db.db_path)
-        db._connect()
-        
-        if db.check_integrity():
-            await message.answer(
-                f"✅ База данных восстановлена из файла {message.document.file_name}\n\n"
-                f"💾 Предыдущая БД сохранена как: {current_backup.name}"
-            )
-        else:
-            # Откат при ошибке
-            shutil.copy2(current_backup, db.db_path)
-            db._connect()
-            await message.answer("❌ Ошибка: файл поврежден. База возвращена к предыдущему состоянию")
-            
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
 
 # ========== НАВИГАЦИЯ ==========
 @router.callback_query(F.data == "force_start")
@@ -1826,8 +1861,8 @@ async def db_management_menu(callback: CallbackQuery):
 
 <b>Доступные действия:</b>
 💾 <b>Сохранить бэкап</b> - создать копию базы данных
-📥 <b>Восстановить из бэкапов на сервере</b> - выбрать ранее сохраненный бэкап
-📤 <b>Загрузить с телефона/ПК</b> - отправить файл бэкапа из Telegram
+📥 <b>Восстановить из бэкапа на сервере</b> - выбрать ранее сохраненный бэкап
+📤 <b>Загрузить с ПК</b> - отправить файл бэкапа из Telegram
 🧹 <b>Очистка</b> - удалить файлы старше 14 дней
 
 <i>📤 Экспорт CSV находится в главном меню админки для быстрого доступа</i>
@@ -1971,8 +2006,10 @@ async def db_restore_confirm(callback: CallbackQuery):
         db._connect()
         
         if db.check_integrity():
+            accounts = db.get_all_accounts()
             await callback.message.edit_text(
                 f"✅ База данных успешно восстановлена из {backup_name}\n\n"
+                f"📊 Загружено {len(accounts)} аккаунтов\n"
                 f"💾 Предыдущая БД сохранена как: {current_backup}",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")]
@@ -2002,19 +2039,21 @@ async def db_restore_confirm(callback: CallbackQuery):
     
     await callback.answer()
 
-@router.callback_query(F.data == "db_upload")
-async def db_upload_callback(callback: CallbackQuery):
-    """Обработка кнопки загрузки с устройства"""
+@router.callback_query(F.data == "db_restore_pc")
+async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработка кнопки загрузки с ПК"""
     await callback.message.edit_text(
-        "📤 <b>Загрузка бэкапа с устройства</b>\n\n"
-        "1️⃣ Найдите файл бэкапа (.db) на вашем телефоне или компьютере\n"
-        "2️⃣ Отправьте его как документ (вложение)\n"
-        "3️⃣ Бот автоматически восстановит данные\n\n"
+        "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
+        "1️⃣ Нажмите на скрепку 📎\n"
+        "2️⃣ Выберите 'Документ'\n"
+        "3️⃣ Найдите файл .db на вашем компьютере\n"
+        "4️⃣ Отправьте его\n\n"
         "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")]
         ])
     )
+    await state.set_state(EditState.waiting_for_backup)
     await callback.answer()
 
 # ========== АДМИН ХЕНДЛЕРЫ ==========
