@@ -2004,41 +2004,6 @@ async def db_restore_menu(callback: CallbackQuery):
     )
     await callback.answer()
 
-@router.callback_query(F.data.startswith("db_restore_"))
-async def db_restore_handler(callback: CallbackQuery):
-    """Восстановление из выбранного бэкапа"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("🚫 Доступ запрещен", show_alert=True)
-        return
-    
-    backup_name = callback.data.replace("db_restore_", "")
-    backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
-    
-    if not backup_path.exists():
-        await callback.message.edit_text(
-            "❌ Файл бэкапа не найден",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_restore_menu")]
-            ])
-        )
-        await callback.answer()
-        return
-    
-    await callback.message.edit_text(
-        f"⚠️ <b>Подтверждение восстановления</b>\n\n"
-        f"Файл: {backup_name}\n"
-        f"Размер: {(backup_path.stat().st_size / 1024):.1f} KB\n\n"
-        f"<b>ВНИМАНИЕ!</b> Текущая база данных будет полностью заменена!\n\n"
-        f"Вы уверены?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Да, восстановить", callback_data=f"db_restore_confirm_{backup_name}"),
-                InlineKeyboardButton(text="❌ Нет, отмена", callback_data="db_restore_menu")
-            ]
-        ])
-    )
-    await callback.answer()
-
 @router.callback_query(F.data.startswith("db_restore_confirm_"))
 async def db_restore_confirm(callback: CallbackQuery):
     """Подтвержденное восстановление бэкапа"""
@@ -2096,14 +2061,23 @@ async def db_restore_confirm(callback: CallbackQuery):
 @router.callback_query(F.data == "db_restore_pc")
 async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
     """Обработка кнопки загрузки с ПК (работает как /restore)"""
+    print(f"\n🔴🔴🔴 НАЧАЛО db_restore_pc_callback 🔴🔴🔴")
+    print(f"   Пользователь: {callback.from_user.id}")
+    print(f"   Админ? {is_admin(callback.from_user.id)}")
+    
     if not is_admin(callback.from_user.id):
+        print(f"   ❌ ДОСТУП ЗАПРЕЩЕН")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
     
-    await callback.answer()
+    print(f"   ✅ ДОСТУП РАЗРЕШЕН")
+    await callback.answer("✅ Загружаю...")
+    
+    print(f"   Удаляем сообщение...")
     await callback.message.delete()
     
-    await callback.message.answer(
+    print(f"   Отправляем новое сообщение...")
+    sent_msg = await callback.message.answer(
         "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
         "1️⃣ Нажмите на скрепку 📎\n"
         "2️⃣ Выберите 'Документ'\n"
@@ -2115,7 +2089,46 @@ async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
         ])
     )
     
+    print(f"   Устанавливаем состояние waiting_for_backup...")
     await state.set_state(EditState.waiting_for_backup)
+    print(f"🔴🔴🔴 КОНЕЦ db_restore_pc_callback 🔴🔴🔴")
+    
+    await state.set_state(EditState.waiting_for_backup)
+
+@router.callback_query(F.data.startswith("db_restore_"))
+async def db_restore_handler(callback: CallbackQuery):
+    """Восстановление из выбранного бэкапа"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    backup_name = callback.data.replace("db_restore_", "")
+    backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
+    
+    if not backup_path.exists():
+        await callback.message.edit_text(
+            "❌ Файл бэкапа не найден",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_restore_menu")]
+            ])
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.edit_text(
+        f"⚠️ <b>Подтверждение восстановления</b>\n\n"
+        f"Файл: {backup_name}\n"
+        f"Размер: {(backup_path.stat().st_size / 1024):.1f} KB\n\n"
+        f"<b>ВНИМАНИЕ!</b> Текущая база данных будет полностью заменена!\n\n"
+        f"Вы уверены?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да, восстановить", callback_data=f"db_restore_confirm_{backup_name}"),
+                InlineKeyboardButton(text="❌ Нет, отмена", callback_data="db_restore_menu")
+            ]
+        ])
+    )
+    await callback.answer()
 # ========== АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data.startswith("admin_table_"))
 async def admin_table(callback: CallbackQuery):
@@ -2585,6 +2598,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
