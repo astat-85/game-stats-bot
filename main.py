@@ -2,6 +2,7 @@
 """
 Telegram Bot для сбора игровых данных
 АДАПТИРОВАНО ДЛЯ BOTHOST.RU
+ИСПРАВЛЕННАЯ НАВИГАЦИЯ И ТАБЛИЦЫ
 """
 
 import sqlite3
@@ -767,26 +768,71 @@ def get_confirm_delete_kb(account_id: int, page: int = 1) -> InlineKeyboardMarku
         ]
     ])
 
-# ========== ФОРМАТТЕРЫ ==========
-def format_pl_value(value: str) -> str:
+# ========== ФОРМАТТЕРЫ С ВЫРАВНИВАНИЕМ ==========
+def format_power(value: str) -> str:
+    """Форматирование электростанции (макс 99)"""
     if not value or value == '—':
-        return '  —'
+        return ' —'
     try:
-        v = html.escape(str(value))
-        if ',' in v:
-            return v.rjust(4)
-        else:
-            return f"{v},0".rjust(4)
+        val = value.replace(',', '').strip()
+        if not val.isdigit():
+            return ' —'
+        num = min(int(val), 99)
+        return f"{num:2d}"
     except:
-        return html.escape(str(value)).rjust(4) if value else '  —'
+        return ' —'
 
-def format_field_value(value: str) -> str:
+def format_bm(value: str) -> str:
+    """Форматирование БМ (макс 999.9)"""
     if not value or value == '—':
-        return '  —'
+        return '   —'
     try:
-        return html.escape(str(value)).rjust(4)
+        val = value.replace(',', '.')
+        num = float(val)
+        num = min(num, 999.9)
+        num = round(num, 1)
+        return f"{num:5.1f}".replace('.', ',')
     except:
-        return html.escape(str(value)).rjust(4) if value else '  —'
+        return '   —'
+
+def format_pl(value: str) -> str:
+    """Форматирование плацдарма (макс 999.9)"""
+    if not value or value == '—':
+        return '   —'
+    try:
+        val = value.replace(',', '.')
+        num = float(val)
+        num = min(num, 999.9)
+        num = round(num, 1)
+        return f"{num:5.1f}".replace('.', ',')
+    except:
+        return '   —'
+
+def format_dragon(value: str) -> str:
+    """Форматирование дракона (макс 99)"""
+    if not value or value == '—':
+        return ' —'
+    try:
+        val = value.replace(',', '').strip()
+        if not val.isdigit():
+            return ' —'
+        num = min(int(val), 99)
+        return f"{num:2d}"
+    except:
+        return ' —'
+
+def format_buff(value: str) -> str:
+    """Форматирование баффов (макс 9)"""
+    if not value or value == '—':
+        return '—'
+    try:
+        val = value.replace(',', '').strip()
+        if not val.isdigit():
+            return '—'
+        num = min(int(val), 9)
+        return str(num)
+    except:
+        return '—'
 
 def format_accounts_table(accounts: List[Dict], start: int = 0) -> str:
     text = "<code>\n"
@@ -799,14 +845,14 @@ def format_accounts_table(accounts: List[Dict], start: int = 0) -> str:
             nick = nick[:17] + '...'
 
         text += f"{i:2d}. {nick}\n"
-        text += f"    ⚡️{format_field_value(acc.get('power', '—'))} "
-        text += f"⚔️{format_field_value(acc.get('bm', '—'))} "
-        text += f"📍1-{format_pl_value(acc.get('pl1', '—'))} "
-        text += f"📍2-{format_pl_value(acc.get('pl2', '—'))} "
-        text += f"📍3-{format_pl_value(acc.get('pl3', '—'))} "
-        text += f"🐉{format_field_value(acc.get('dragon', '—'))} "
-        text += f"🏗️{format_field_value(acc.get('buffs_stands', '—'))} "
-        text += f"🔬{format_field_value(acc.get('buffs_research', '—'))}\n\n"
+        text += f"    ⚡️{format_power(acc.get('power', '—'))} "
+        text += f"⚔️{format_bm(acc.get('bm', '—'))} "
+        text += f"📍1-{format_pl(acc.get('pl1', '—'))} "
+        text += f"📍2-{format_pl(acc.get('pl2', '—'))} "
+        text += f"📍3-{format_pl(acc.get('pl3', '—'))} "
+        text += f"🐉{format_dragon(acc.get('dragon', '—'))} "
+        text += f"🏗️{format_buff(acc.get('buffs_stands', '—'))} "
+        text += f"🔬{format_buff(acc.get('buffs_research', '—'))}\n\n"
     text += "</code>"
     return text
 
@@ -1816,9 +1862,14 @@ async def send_account(callback: CallbackQuery):
 # ========== НАВИГАЦИЯ ==========
 @router.callback_query(F.data == "menu")
 async def menu_cb(callback: CallbackQuery, state: FSMContext):
+    """Возврат в главное меню"""
     await state.clear()
     user_id = callback.from_user.id
     await callback.message.edit_text(
+        "🏠 Главное меню",
+        reply_markup=None
+    )
+    await callback.message.answer(
         "🏠 Главное меню",
         reply_markup=get_main_kb(user_id)
     )
@@ -1829,6 +1880,10 @@ async def cancel_cb(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     user_id = callback.from_user.id
     await callback.message.edit_text(
+        "❌ Отменено",
+        reply_markup=None
+    )
+    await callback.message.answer(
         "❌ Отменено",
         reply_markup=get_main_kb(user_id)
     )
@@ -2041,8 +2096,15 @@ async def db_restore_confirm(callback: CallbackQuery):
 
 @router.callback_query(F.data == "db_restore_pc")
 async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
-    """Обработка кнопки загрузки с ПК"""
-    await callback.message.edit_text(
+    """Обработка кнопки загрузки с ПК (работает как /restore)"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    # Отправляем новое сообщение с инструкцией
+    await callback.message.answer(
         "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
         "1️⃣ Нажмите на скрепку 📎\n"
         "2️⃣ Выберите 'Документ'\n"
@@ -2050,11 +2112,18 @@ async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
         "4️⃣ Отправьте его\n\n"
         "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management_cancel")]
         ])
     )
+    
     await state.set_state(EditState.waiting_for_backup)
-    await callback.answer()
+
+@router.callback_query(F.data == "db_management_cancel")
+async def db_management_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена загрузки с ПК и возврат в меню управления БД"""
+    await state.clear()
+    await callback.message.delete()  # Удаляем сообщение с инструкцией
+    await db_management_menu(callback)  # Возвращаемся в меню управления БД
 
 # ========== АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data.startswith("admin_table_"))
@@ -2456,6 +2525,7 @@ async def admin_refresh(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_back")
 async def admin_back(callback: CallbackQuery):
+    """Возврат в главное меню админки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
@@ -2472,6 +2542,13 @@ async def admin_back(callback: CallbackQuery):
 @router.callback_query(F.data == "noop")
 async def noop(callback: CallbackQuery):
     await callback.answer()
+
+# ========== ОБРАБОТЧИК НЕИЗВЕСТНЫХ CALLBACK ==========
+@router.callback_query()
+async def unknown_callback(callback: CallbackQuery):
+    """Обработчик неизвестных callback_data"""
+    logger.warning(f"Неизвестный callback: {callback.data}")
+    await callback.answer("❌ Неизвестная команда", show_alert=True)
 
 # ========== ЗАПУСК ==========
 async def main():
