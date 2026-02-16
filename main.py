@@ -660,7 +660,7 @@ class EditState(StatesGroup):
     step_by_step = State()
     waiting_search_query = State()
     waiting_batch_delete = State()
-    waiting_for_backup = State()  # Состояние ожидания бэкапа
+    waiting_for_backup = State()
 
 # ========== КЛАВИАТУРЫ ==========
 def is_admin(user_id: int) -> bool:
@@ -689,11 +689,6 @@ def get_cancel_kb() -> ReplyKeyboardMarkup:
         keyboard=[[KeyboardButton(text="🚫 Отмена")]],
         resize_keyboard=True
     )
-
-def get_cancel_inline() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
-    ])
 
 def get_accounts_kb(accounts: List[Dict]) -> InlineKeyboardMarkup:
     buttons = []
@@ -768,7 +763,7 @@ def get_confirm_delete_kb(account_id: int, page: int = 1) -> InlineKeyboardMarku
         ]
     ])
 
-# ========== ФОРМАТТЕРЫ С ВЫРАВНИВАНИЕМ ==========
+# ========== ФОРМАТТЕРЫ ==========
 def format_power(value: str) -> str:
     """Форматирование электростанции (макс 99)"""
     if not value or value == '—':
@@ -995,7 +990,6 @@ async def restore_command(message: Message, state: FSMContext):
         "3️⃣ Найдите файл .db на вашем устройстве\n"
         "4️⃣ Отправьте его"
     )
-    # Устанавливаем состояние ожидания файла
     await state.set_state(EditState.waiting_for_backup)
 
 # ========== ОСНОВНЫЕ КНОПКИ ==========
@@ -1489,7 +1483,6 @@ async def handle_backup_file(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    # Проверяем расширение
     if not message.document.file_name.endswith('.db'):
         await message.answer("❌ Нужен файл с расширением .db")
         await state.clear()
@@ -1498,31 +1491,21 @@ async def handle_backup_file(message: Message, state: FSMContext):
     await message.answer("🔄 Загружаю и восстанавливаю бэкап...")
     
     try:
-        # Скачиваем файл
         file = await bot.get_file(message.document.file_id)
         downloaded_file = await bot.download_file(file.file_path)
         
-        # Сохраняем во временный файл
         temp_path = BACKUP_DIR / f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
         with open(temp_path, 'wb') as f:
             f.write(downloaded_file.getvalue())
         
-        # Создаем бэкап текущей БД
         current_backup = BACKUP_DIR / f"before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
         shutil.copy2(db.db_path, current_backup)
         
-        # Закрываем текущее соединение
         db.close()
-        
-        # Копируем загруженный файл как новую БД
         shutil.copy2(temp_path, db.db_path)
-        
-        # Переподключаемся
         db._connect()
         
-        # Проверяем целостность
         if db.check_integrity():
-            # Проверяем, есть ли данные
             accounts = db.get_all_accounts()
             if accounts:
                 await message.answer(
@@ -1532,7 +1515,6 @@ async def handle_backup_file(message: Message, state: FSMContext):
                     f"👑 Нажмите /admin для проверки"
                 )
             else:
-                # Если нет данных - откатываем
                 shutil.copy2(current_backup, db.db_path)
                 db._connect()
                 await message.answer(
@@ -1540,7 +1522,6 @@ async def handle_backup_file(message: Message, state: FSMContext):
                     "База возвращена к предыдущему состоянию."
                 )
         else:
-            # Если файл поврежден - откатываем
             shutil.copy2(current_backup, db.db_path)
             db._connect()
             await message.answer(
@@ -1550,7 +1531,6 @@ async def handle_backup_file(message: Message, state: FSMContext):
         
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
-        # Пытаемся восстановить соединение
         try:
             db._connect()
         except:
@@ -1959,13 +1939,8 @@ async def db_restore_menu(callback: CallbackQuery):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
     
-    # Ищем в папке backups
     backups = sorted(BACKUP_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
-    
-    # Ищем в корневой папке
     root_backups = sorted(BASE_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
-    
-    # Объединяем
     all_backups = backups + root_backups
     
     if not all_backups:
@@ -2103,7 +2078,8 @@ async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
     
     await callback.answer()
     
-    # Отправляем новое сообщение с инструкцией
+    await callback.message.delete()
+    
     await callback.message.answer(
         "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
         "1️⃣ Нажмите на скрепку 📎\n"
@@ -2112,18 +2088,11 @@ async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
         "4️⃣ Отправьте его\n\n"
         "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management_cancel")]
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="db_management")]
         ])
     )
     
     await state.set_state(EditState.waiting_for_backup)
-
-@router.callback_query(F.data == "db_management_cancel")
-async def db_management_cancel(callback: CallbackQuery, state: FSMContext):
-    """Отмена загрузки с ПК и возврат в меню управления БД"""
-    await state.clear()
-    await callback.message.delete()  # Удаляем сообщение с инструкцией
-    await db_management_menu(callback)  # Возвращаемся в меню управления БД
 
 # ========== АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data.startswith("admin_table_"))
@@ -2525,7 +2494,6 @@ async def admin_refresh(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_back")
 async def admin_back(callback: CallbackQuery):
-    """Возврат в главное меню админки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
