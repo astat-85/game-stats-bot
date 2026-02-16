@@ -661,6 +661,18 @@ class EditState(StatesGroup):
     waiting_search_query = State()
     waiting_batch_delete = State()
     waiting_for_backup = State()
+    
+# ========== ОТЛАДКА ==========
+@router.callback_query()
+async def debug_all_callbacks(callback: CallbackQuery):
+    """Отлавливает ВСЕ callback для отладки"""
+    print(f"\n🔍🔍🔍 ПОЛУЧЕН CALLBACK: {callback.data} 🔍🔍🔍")
+    print(f"   От пользователя: {callback.from_user.id}")
+    print(f"   Админ? {is_admin(callback.from_user.id)}")
+    print(f"   Сообщение: {callback.message.text[:50] if callback.message.text else 'Нет текста'}")
+    
+    # Временно отвечаем, чтобы увидеть в Telegram
+    await callback.answer(f"Получен callback: {callback.data}", show_alert=False)
 
 # ========== КЛАВИАТУРЫ ==========
 def is_admin(user_id: int) -> bool:
@@ -2563,3 +2575,4 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
