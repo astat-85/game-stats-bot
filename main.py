@@ -1956,6 +1956,65 @@ async def db_management_menu(callback: CallbackQuery):
     print(f"🔴🔴🔴 КОНЕЦ db_management_menu 🔴🔴🔴")
     await callback.answer()
 
+@router.callback_query(F.data == "db_backup")
+async def db_backup_handler(callback: CallbackQuery):
+    """Создание бэкапа базы данных"""
+    print(f"\n🔴🔴🔴 НАЧАЛО db_backup_handler 🔴🔴🔴")
+    print(f"   Пользователь: {callback.from_user.id}")
+    print(f"   Админ? {is_admin(callback.from_user.id)}")
+    
+    if not is_admin(callback.from_user.id):
+        print(f"   ❌ ДОСТУП ЗАПРЕЩЕН")
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    print(f"   ✅ ДОСТУП РАЗРЕШЕН")
+    await callback.answer("🔄 Создаю бэкап...")
+    
+    await callback.message.edit_text("🔄 Создание бэкапа...")
+    
+    try:
+        path = await asyncio.to_thread(db.create_backup)
+        print(f"   Путь к бэкапу: {path}")
+        
+        if path and Path(path).exists():
+            print(f"   ✅ Бэкап создан, размер: {Path(path).stat().st_size} байт")
+            try:
+                await bot.send_document(
+                    chat_id=callback.from_user.id,
+                    document=FSInputFile(path),
+                    caption=f"💾 Бэкап от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+                )
+                print(f"   ✅ Файл отправлен пользователю")
+                
+                # Возвращаемся в меню управления БД
+                await db_management_menu(callback)
+            except Exception as e:
+                print(f"   ❌ Ошибка отправки файла: {e}")
+                await callback.message.edit_text(
+                    f"❌ Ошибка отправки файла: {e}",
+                    reply_markup=get_db_management_kb()
+                )
+        else:
+            print(f"   ❌ Ошибка: файл не создан")
+            await callback.message.edit_text(
+                "❌ Ошибка создания бэкапа",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")]
+                ])
+            )
+    except Exception as e:
+        print(f"   ❌ Критическая ошибка: {e}")
+        await callback.message.edit_text(
+            f"❌ Ошибка: {e}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")]
+            ])
+        )
+    
+    print(f"🔴🔴🔴 КОНЕЦ db_backup_handler 🔴🔴🔴")
+    await callback.answer()
+
 @router.callback_query(F.data == "db_restore_menu")
 async def db_restore_menu(callback: CallbackQuery):
     """Меню выбора бэкапа для восстановления"""
@@ -2598,6 +2657,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
