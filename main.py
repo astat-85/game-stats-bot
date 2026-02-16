@@ -1883,7 +1883,7 @@ async def cancel_cb(callback: CallbackQuery, state: FSMContext):
 
 # ========== НОВЫЕ АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data == "db_management")
-async def async def db_management_menu(callback: CallbackQuery):
+async def db_management_menu(callback: CallbackQuery):
     """Меню управления базой данных"""
     print(f"\n🔴🔴🔴 НАЧАЛО db_management_menu 🔴🔴🔴")
     print(f"   Пользователь: {callback.from_user.id}")
@@ -2580,6 +2580,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
