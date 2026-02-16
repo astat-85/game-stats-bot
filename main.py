@@ -857,7 +857,7 @@ def format_accounts_table(accounts: List[Dict], start: int = 0) -> str:
             nick = nick[:17] + '...'
 
         text += f"{i:2d}. {nick}\n"
-        text += f"    ⚡️{format_power(acc.get('power', '—'))} "
+        text += f"  ⚡️{format_power(acc.get('power', '—'))} "
         text += f"⚔️{format_bm(acc.get('bm', '—'))} "
         text += f"📍1-{format_pl(acc.get('pl1', '—'))} "
         text += f"📍2-{format_pl(acc.get('pl2', '—'))} "
@@ -2598,6 +2598,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
