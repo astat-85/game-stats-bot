@@ -1883,25 +1883,31 @@ async def cancel_cb(callback: CallbackQuery, state: FSMContext):
 
 # ========== НОВЫЕ АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data == "db_management")
-async def db_management_menu(callback: CallbackQuery):
+async def async def db_management_menu(callback: CallbackQuery):
     """Меню управления базой данных"""
+    print(f"\n🔴🔴🔴 НАЧАЛО db_management_menu 🔴🔴🔴")
+    print(f"   Пользователь: {callback.from_user.id}")
+    print(f"   Админ? {is_admin(callback.from_user.id)}")
+    
     if not is_admin(callback.from_user.id):
+        print(f"   ❌ ДОСТУП ЗАПРЕЩЕН")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
     
-    print(f"\n📋 ОТКРЫТО МЕНЮ УПРАВЛЕНИЯ БД")
-    print(f"   Кнопки в меню:")
-    kb = get_db_management_kb()
-    for row in kb.inline_keyboard:
-        for btn in row:
-            print(f"   - {btn.text} : {btn.callback_data}")
+    print(f"   ✅ ДОСТУП РАЗРЕШЕН")
+    await callback.answer("✅ Загружаю меню...")
     
+    print(f"   Получаем статистику...")
     stats = db.get_stats()
+    print(f"   Статистика: {stats}")
+    
     try:
         db_size = db.db_path.stat().st_size / 1024
         backups = len(list(BACKUP_DIR.glob("backup_*.db")))
         exports = len(list(EXPORT_DIR.glob("export_*.csv")))
-    except:
+        print(f"   Размер БД: {db_size:.1f} KB, Бэкапов: {backups}, Экспортов: {exports}")
+    except Exception as e:
+        print(f"   ❌ Ошибка получения размеров: {e}")
         db_size = backups = exports = 0
     
     text = f"""🗄️ <b>Управление базой данных</b>
@@ -1922,33 +1928,27 @@ async def db_management_menu(callback: CallbackQuery):
 <i>📤 Экспорт CSV находится в главном меню админки для быстрого доступа</i>
 """
     
-    await callback.message.edit_text(text, reply_markup=kb)
-    await callback.answer()
-
-@router.callback_query(F.data == "db_backup")
-async def db_backup_handler(callback: CallbackQuery):
-    """Создание бэкапа базы данных"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("🚫 Доступ запрещен", show_alert=True)
-        return
+    print(f"   Получаем клавиатуру...")
+    kb = get_db_management_kb()
     
-    await callback.message.edit_text("🔄 Создание бэкапа...")
+    print(f"   Кнопки в меню:")
+    for i, row in enumerate(kb.inline_keyboard):
+        for j, btn in enumerate(row):
+            print(f"     [{i},{j}] {btn.text} : callback_data='{btn.callback_data}'")
     
-    path = await asyncio.to_thread(db.create_backup)
-    
-    if path and Path(path).exists():
+    print(f"   Редактируем сообщение...")
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+        print(f"   ✅ Сообщение обновлено")
+    except Exception as e:
+        print(f"   ❌ Ошибка при edit_text: {e}")
         try:
-            await bot.send_document(
-                chat_id=callback.from_user.id,
-                document=FSInputFile(path),
-                caption=f"💾 Бэкап от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-            )
-            await db_management_menu(callback)
-        except Exception as e:
-            await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=get_db_management_kb())
-    else:
-        await callback.message.edit_text("❌ Ошибка создания бэкапа", reply_markup=get_db_management_kb())
+            await callback.message.answer(text, reply_markup=kb)
+            print(f"   ✅ Отправлено новое сообщение")
+        except Exception as e2:
+            print(f"   ❌❌ КРИТИЧЕСКАЯ ОШИБКА: {e2}")
     
+    print(f"🔴🔴🔴 КОНЕЦ db_management_menu 🔴🔴🔴")
     await callback.answer()
 
 @router.callback_query(F.data == "db_restore_menu")
@@ -2580,6 +2580,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
