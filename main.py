@@ -534,30 +534,126 @@ class Database:
             return {"unique_users": 0, "total_accounts": 0, "avg_accounts_per_user": 0}
 
     def create_backup(self, filename: str = None) -> Optional[str]:
+        """
+        Создает полный бэкап базы данных со всеми данными
+        Возвращает путь к файлу бэкапа или None в случае ошибки
+        """
         if not self.conn:
             self._connect()
             
         try:
+            # Генерируем имя файла если не указано
             if not filename:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 filename = f"backup_{timestamp}.db"
 
             filepath = BACKUP_DIR / filename
+            print(f"\n💾 СОЗДАНИЕ БЭКАПА: {filepath}")
 
             with self.lock:
+                # 1. ПРИНУДИТЕЛЬНО СОХРАНЯЕМ ВСЕ НЕЗАВЕРШЕННЫЕ ТРАНЗАКЦИИ
                 self.conn.commit()
-                shutil.copy2(self.db_path, filepath)
+                print("✅ Транзакции сохранены")
 
-            logger.info(f"✅ Бэкап: {filepath}")
+                # 2. ПРОВЕРЯЕМ ЦЕЛОСТНОСТЬ ТЕКУЩЕЙ БД
+                self.cursor.execute("PRAGMA integrity_check")
+                integrity_result = self.cursor.fetchone()[0]
+                if integrity_result != "ok":
+                    print(f"❌ Проблема с целостностью БД: {integrity_result}")
+                    # Пытаемся восстановить
+                    self.cursor.execute("REINDEX")
+                    self.conn.commit()
+                    print("🔄 Выполнен REINDEX")
 
-            backups = sorted(BACKUP_DIR.glob("backup_*.db"))
-            if len(backups) > 10:
-                for old in backups[:-10]:
-                    old.unlink()
+                # 3. ПОЛУЧАЕМ ТОЧНОЕ КОЛИЧЕСТВО ЗАПИСЕЙ ДО БЭКАПА
+                self.cursor.execute("SELECT COUNT(*) FROM users")
+                original_count = self.cursor.fetchone()[0]
+                print(f"📊 Записей в БД: {original_count}")
 
+                # 4. СОЗДАЕМ БЭКАП ЧЕРЕЗ SQLite backup API (надежнее чем копирование)
+                import sqlite3
+                backup_conn = sqlite3.connect(str(filepath))
+                self.conn.backup(backup_conn)
+                backup_conn.close()
+                print("✅ Бэкап создан через backup API")
+
+                # 5. ПРОВЕРЯЕМ СОЗДАННЫЙ БЭКАП
+                if filepath.exists():
+                    backup_size = filepath.stat().st_size
+                    print(f"📦 Размер бэкапа: {backup_size} bytes")
+
+                    # Открываем бэкап и проверяем количество записей
+                    check_conn = sqlite3.connect(str(filepath))
+                    check_cursor = check_conn.cursor()
+                    
+                    # Проверяем структуру
+                    check_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tables = check_cursor.fetchall()
+                    print(f"📋 Таблицы в бэкапе: {[t[0] for t in tables]}")
+                    
+                    # Считаем записи
+                    check_cursor.execute("SELECT COUNT(*) FROM users")
+                    backup_count = check_cursor.fetchone()[0]
+                    check_conn.close()
+                    
+                    print(f"📊 Записей в бэкапе: {backup_count}")
+                    
+                    # Сравниваем количество
+                    if backup_count != original_count:
+                        print(f"❌ НЕСООТВЕТСТВИЕ! Оригинал: {original_count}, Бэкап: {backup_count}")
+                        # Пробуем еще раз с VACUUM
+                        self.cursor.execute("VACUUM")
+                        self.conn.commit()
+                        
+                        # Повторяем бэкап
+                        backup_conn = sqlite3.connect(str(filepath))
+                        self.conn.backup(backup_conn)
+                        backup_conn.close()
+                        
+                        # Проверяем снова
+                        check_conn = sqlite3.connect(str(filepath))
+                        check_cursor = check_conn.cursor()
+                        check_cursor.execute("SELECT COUNT(*) FROM users")
+                        backup_count = check_cursor.fetchone()[0]
+                        check_conn.close()
+                        print(f"📊 После повторной попытки: {backup_count}")
+                    else:
+                        print(f"✅ Количество записей совпадает: {backup_count}")
+
+                    # 6. СОЗДАЕМ ТЕКСТОВЫЙ ФАЙЛ С ИНФОРМАЦИЕЙ (для проверки)
+                    info_path = filepath.with_suffix('.txt')
+                    with open(info_path, 'w', encoding='utf-8') as f:
+                        f.write(f"Бэкап создан: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"Оригинал БД: {self.db_path}\n")
+                        f.write(f"Размер: {backup_size} bytes\n")
+                        f.write(f"Записей в users: {backup_count}\n")
+                        
+                        # Добавляем список всех пользователей
+                        check_conn = sqlite3.connect(str(self.db_path))
+                        check_conn.row_factory = sqlite3.Row
+                        check_cursor = check_conn.cursor()
+                        check_cursor.execute("SELECT id, user_id, game_nickname FROM users ORDER BY id")
+                        for row in check_cursor:
+                            f.write(f"ID:{row['id']} | User:{row['user_id']} | Nick:{row['game_nickname']}\n")
+                        check_conn.close()
+
+                # 7. УДАЛЯЕМ СТАРЫЕ БЭКАПЫ (оставляем только 10 последних)
+                backups = sorted(BACKUP_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
+                if len(backups) > 10:
+                    for old in backups[10:]:
+                        old.unlink()
+                        # Удаляем и соответствующий txt файл
+                        old_txt = old.with_suffix('.txt')
+                        if old_txt.exists():
+                            old_txt.unlink()
+                    print(f"🧹 Оставлено 10 последних бэкапов")
+
+            logger.info(f"✅ Бэкап успешно создан: {filepath} (записей: {original_count})")
             return str(filepath)
+
         except Exception as e:
-            logger.error(f"❌ Ошибка бэкапа: {e}")
+            logger.error(f"❌ Критическая ошибка при создании бэкапа: {e}")
+            traceback.print_exc()
             return None
 
     def export_to_csv(self, filename: str = None) -> Optional[str]:
@@ -2303,115 +2399,6 @@ async def db_restore_unified_handler(callback: CallbackQuery, state: FSMContext)
     print(f"⚠️ Неизвестный callback: {callback.data}")
     await callback.answer()
 
-@router.callback_query(F.data.startswith("db_restore_confirm_"))
-async def db_restore_confirm(callback: CallbackQuery):
-    """Подтвержденное восстановление бэкапа"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("🚫 Доступ запрещен", show_alert=True)
-        return
-    
-    backup_name = callback.data.replace("db_restore_confirm_", "")
-    backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
-    
-    await callback.message.edit_text("🔄 Восстановление...")
-    
-    try:
-        current_backup = f"before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        shutil.copy2(db.db_path, BACKUP_DIR / current_backup)
-        
-        db.close()
-        shutil.copy2(backup_path, db.db_path)
-        db._connect()
-        
-        if db.check_integrity():
-            accounts = db.get_all_accounts()
-            await callback.message.edit_text(
-                f"✅ База данных успешно восстановлена из {backup_name}\n\n"
-                f"📊 Загружено {len(accounts)} аккаунтов\n"
-                f"💾 Предыдущая БД сохранена как: {current_backup}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")]
-                ])
-            )
-        else:
-            # Восстанавливаем предыдущую версию
-            shutil.copy2(BACKUP_DIR / current_backup, db.db_path)
-            db._connect()
-            await callback.message.edit_text(
-                "❌ Ошибка: восстановленный файл поврежден. База возвращена к предыдущему состоянию.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")]
-                ])
-            )
-            
-    except Exception as e:
-        logger.error(f"Ошибка восстановления: {e}")
-        await callback.message.edit_text(
-            f"❌ Ошибка восстановления: {e}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_restore_menu")]
-            ])
-        )
-        try:
-            db._connect()
-        except:
-            pass
-    
-    await callback.answer()
-
-# ========== ЗАГРУЗКА С ПК ==========
-@router.callback_query(F.data == "db_restore_pc")
-async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
-    """Обработка кнопки загрузки с ПК"""
-    print("\n" + "="*50)
-    print("🔴🔴🔴 db_restore_pc_callback ВЫЗВАН! 🔴🔴🔴")
-    print(f"   callback.data = '{callback.data}'")
-    print(f"   user_id = {callback.from_user.id}")
-    print(f"   is_admin = {is_admin(callback.from_user.id)}")
-    print(f"   message_id = {callback.message.message_id}")
-    print("="*50)
-    
-    if not is_admin(callback.from_user.id):
-        print("❌ ДОСТУП ЗАПРЕЩЕН")
-        await callback.answer("🚫 Доступ запрещен", show_alert=True)
-        return
-    
-    print("✅ Доступ разрешен")
-    await callback.answer()
-    
-    print("📝 Редактирую сообщение...")
-    try:
-        await callback.message.edit_text(
-            "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
-            "1️⃣ Нажмите на скрепку 📎\n"
-            "2️⃣ Выберите 'Документ'\n"
-            "3️⃣ Найдите файл .db на вашем компьютере\n"
-            "4️⃣ Отправьте его\n\n"
-            "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="db_management")]
-            ])
-        )
-        print("✅ Сообщение отредактировано")
-    except Exception as e:
-        print(f"❌ Ошибка при редактировании: {e}")
-    
-    print("🔄 Очищаю состояние FSM...")
-    await state.clear()
-    
-    print("🔄 Устанавливаю состояние waiting_for_backup...")
-    await state.set_state(EditState.waiting_for_backup)
-    await state.update_data(restore_mode="pc")
-    
-    # Проверяем состояние после установки
-    current_state = await state.get_state()
-    current_data = await state.get_data()
-    print(f"📊 Текущее состояние: {current_state}")
-    print(f"📊 Данные состояния: {current_data}")
-    
-    print("✅ db_restore_pc_callback завершен")
-    print("="*50)
-
 # ========== АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data.startswith("admin_table_"))
 async def admin_table(callback: CallbackQuery):
@@ -3001,7 +2988,3 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
-
-
-
-
