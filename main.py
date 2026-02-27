@@ -1967,21 +1967,36 @@ async def delete_account(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("confirm_delete_"))
 async def confirm_delete(callback: CallbackQuery):
+    """Подтверждение удаления аккаунта пользователем"""
+    print("\n" + "="*50)
+    print("🗑️🗑️🗑️ confirm_delete ВЫЗВАН! 🗑️🗑️🗑️")
+    print(f"   callback.data = '{callback.data}'")
+    print(f"   user_id = {callback.from_user.id}")
+    print("="*50)
+    
     try:
         account_id = int(callback.data.split("_")[2])
-    except (ValueError, IndexError):
+        print(f"📦 account_id = {account_id}")
+    except (ValueError, IndexError) as e:
+        print(f"❌ Ошибка парсинга: {e}")
         await callback.answer("❌ Неверный ID аккаунта", show_alert=True)
         return
         
     account = db.get_account_by_id(account_id)
-
     if not account:
+        print(f"❌ Аккаунт {account_id} не найден")
         await callback.answer("❌ Аккаунт не найден", show_alert=True)
         return
+    
+    print(f"📋 Аккаунт: {account.get('game_nickname')}")
 
     if db.delete_account(account_id):
+        print(f"✅ Аккаунт {account_id} удален")
         db.invalidate_cache()
+        
+        # Проверяем остались ли аккаунты у пользователя
         remaining_accounts = db.get_user_accounts(callback.from_user.id)
+        print(f"📊 Осталось аккаунтов у пользователя: {len(remaining_accounts)}")
 
         if remaining_accounts:
             await callback.message.edit_text(
@@ -2000,6 +2015,7 @@ async def confirm_delete(callback: CallbackQuery):
                 ])
             )
     else:
+        print(f"❌ Ошибка удаления аккаунта {account_id}")
         await callback.message.edit_text(
             "❌ Ошибка удаления",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2462,36 +2478,58 @@ async def admin_table(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("confirm_del_"))
 async def confirm_del(callback: CallbackQuery):
+    """Подтверждение удаления аккаунта админом"""
+    print("\n" + "="*50)
+    print("🗑️🗑️🗑️ confirm_del ВЫЗВАН! 🗑️🗑️🗑️")
+    print(f"   callback.data = '{callback.data}'")
+    print(f"   user_id = {callback.from_user.id}")
+    print("="*50)
+    
     if not is_admin(callback.from_user.id):
+        print("❌ ДОСТУП ЗАПРЕЩЕН")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
     parts = callback.data.split("_")
     if len(parts) < 4:
+        print(f"❌ Неверный формат: {parts}")
         await callback.answer("❌ Неверный формат данных", show_alert=True)
         return
         
     try:
         account_id = int(parts[2])
         page = int(parts[3])
-    except ValueError:
+        print(f"📦 account_id = {account_id}, page = {page}")
+    except ValueError as e:
+        print(f"❌ Ошибка парсинга: {e}")
         await callback.answer("❌ Неверный ID или страница", show_alert=True)
         return
 
     account = db.get_account_by_id(account_id)
-
     if not account:
+        print(f"❌ Аккаунт {account_id} не найден")
         await callback.answer("❌ Аккаунт не найден", show_alert=True)
         return
+    
+    print(f"📋 Аккаунт: {account.get('game_nickname')}")
 
     if db.delete_account(account_id):
+        print(f"✅ Аккаунт {account_id} удален")
+        db.invalidate_cache()
+        
+        # Проверяем остались ли еще аккаунты
+        remaining = db.get_all_accounts()
+        print(f"📊 Осталось аккаунтов: {len(remaining)}")
+        
         await callback.message.edit_text(
             f"✅ Аккаунт {account['game_nickname']} (ID:{account_id}) удален",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_table_{page}")]
+                [InlineKeyboardButton(text="📋 Обновить таблицу", callback_data=f"admin_table_{page}")],
+                [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_back")]
             ])
         )
     else:
+        print(f"❌ Ошибка удаления аккаунта {account_id}")
         await callback.message.edit_text(
             "❌ Ошибка удаления",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2988,3 +3026,4 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
