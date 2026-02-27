@@ -657,141 +657,61 @@ class Database:
             return None
 
     def export_to_csv(self, filename: str = None) -> Optional[str]:
-        if not self.conn:
-            self._connect()
-            
-        try:
-            if not filename:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f"export_{timestamp}.csv"
-
-            filepath = EXPORT_DIR / filename
-            accounts = self.get_all_accounts()
-
-            if not accounts:
-                return None
-
-            with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
-                writer = csv.writer(f, delimiter=';')
-                writer.writerow([
-                    "№", "Ник в игре", "Эл", "БМ", "Пл 1", "Пл 2", "Пл 3",
-                    "Др", "БС", "БИ", "ID имя", "ID номер", "Время", "Дата"
-                ])
-
-                for i, acc in enumerate(accounts, 1):
-                    updated = acc.get('updated_at', '')
-                    time_str = '--:--:--'
-                    date_str = '--.--.----'
-
-                    if updated:
-                        try:
-                            dt = datetime.strptime(updated, '%Y-%m-%d %H:%M:%S')
-                            time_str = dt.strftime('%H:%M:%S')
-                            date_str = dt.strftime('%d.%m.%Y')
-                        except:
-                            pass
-
-                    bm = acc.get('bm', '')
-                    if bm and bm != '—' and ',' not in bm:
-                        bm = f"{bm},0"
-
-                    pl1 = acc.get('pl1', '')
-                    if pl1 and pl1 != '—' and ',' not in pl1:
-                        pl1 = f"{pl1},0"
-
-                    pl2 = acc.get('pl2', '')
-                    if pl2 and pl2 != '—' and ',' not in pl2:
-                        pl2 = f"{pl2},0"
-
-                    pl3 = acc.get('pl3', '')
-                    if pl3 and pl3 != '—' and ',' not in pl3:
-                        pl3 = f"{pl3},0"
-
-                    writer.writerow([
-                        i,
-                        acc.get('game_nickname', ''),
-                        acc.get('power', ''),
-                        bm,
-                        pl1,
-                        pl2,
-                        pl3,
-                        acc.get('dragon', ''),
-                        acc.get('buffs_stands', ''),
-                        acc.get('buffs_research', ''),
-                        f"@{acc.get('username', '')}" if acc.get('username') else '',
-                        acc.get('user_id', ''),
-                        time_str,
-                        date_str
-                    ])
-
-            logger.info(f"✅ Экспорт: {filepath}")
-            return str(filepath)
-        except Exception as e:
-            logger.error(f"❌ Ошибка экспорта: {e}")
-            return None
-
-    def export_to_excel(self, filename: str = None) -> Optional[str]:
-        """Экспорт в Excel с автоматической шириной столбцов + отступы"""
-        if not self.conn:
-            self._connect()
+    """Экспорт в CSV с округлением чисел до 0.1 и выравниванием"""
+    if not self.conn:
+        self._connect()
         
-        # Проверяем наличие openpyxl
-        try:
-            import openpyxl
-            from openpyxl.utils import get_column_letter
-            from openpyxl.styles import Font, PatternFill, Alignment
-        except ImportError:
-            logger.error("❌ openpyxl не установлен. Установите: pip install openpyxl")
+    try:
+        if not filename:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"export_{timestamp}.csv"
+
+        filepath = EXPORT_DIR / filename
+        accounts = self.get_all_accounts()
+
+        if not accounts:
             return None
-            
-        try:
-            if not filename:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f"export_{timestamp}.xlsx"
 
-            filepath = EXPORT_DIR / filename
-            accounts = self.get_all_accounts()
+        # Подсчет аккаунтов для групп
+        accounts_count = {}
+        for acc in accounts:
+            user_id = acc.get('user_id')
+            if user_id:
+                accounts_count[user_id] = accounts_count.get(user_id, 0) + 1
 
-            if not accounts:
-                return None
+        # Номера групп для мультиаккаунтов
+        group_number = 1
+        user_group = {}
+        for user_id, count in accounts_count.items():
+            if count > 1:
+                user_group[user_id] = group_number
+                group_number += 1
 
-            # Подсчет аккаунтов для групп
-            accounts_count = {}
-            for acc in accounts:
-                user_id = acc.get('user_id')
-                if user_id:
-                    accounts_count[user_id] = accounts_count.get(user_id, 0) + 1
+        # Функция для округления до 0.1
+        def round_to_tenths(val):
+            if not val or val == '—':
+                return ''
+            try:
+                # Заменяем запятую на точку для преобразования
+                val_float = float(val.replace(',', '.'))
+                # Округляем до 1 знака после запятой
+                rounded = round(val_float * 10) / 10
+                # Если дробная часть 0, показываем как целое число
+                if rounded.is_integer():
+                    return str(int(rounded))
+                else:
+                    # Заменяем точку на запятую для вывода
+                    return str(rounded).replace('.', ',')
+            except:
+                return val
 
-            # Номера групп для мультиаккаунтов
-            group_number = 1
-            user_group = {}
-            for user_id, count in accounts_count.items():
-                if count > 1:
-                    user_group[user_id] = group_number
-                    group_number += 1
-
-            # Создаем Excel файл
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Игроки"
-
-            # Заголовки
-            headers = [
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f, delimiter=';')
+            writer.writerow([
                 "№", "Группа", "Ник в игре", "Эл", "БМ", "Пл 1", "Пл 2", "Пл 3",
                 "Др", "БС", "БИ", "ID имя", "ID номер", "Время", "Дата"
-            ]
-            
-            # Стиль для заголовков
-            header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-            header_font_white = Font(bold=True, color="FFFFFF")
-            
-            for col, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col, value=header)
-                cell.font = header_font_white
-                cell.fill = header_fill
-                cell.alignment = Alignment(horizontal='center')
+            ])
 
-            # Данные
             for i, acc in enumerate(accounts, 1):
                 updated = acc.get('updated_at', '')
                 time_str = '--:--:--'
@@ -805,70 +725,238 @@ class Database:
                     except:
                         pass
 
-                bm = acc.get('bm', '')
-                if bm and bm != '—' and ',' not in bm:
-                    bm = f"{bm},0"
+                # ===== ОКРУГЛЕНИЕ ЧИСЕЛ =====
+                # Дробные поля с округлением до 0.1
+                bm = round_to_tenths(acc.get('bm', ''))
+                pl1 = round_to_tenths(acc.get('pl1', ''))
+                pl2 = round_to_tenths(acc.get('pl2', ''))
+                pl3 = round_to_tenths(acc.get('pl3', ''))
+                
+                # Целочисленные поля - убираем дробную часть
+                power = acc.get('power', '')
+                if power and power != '—' and ',' in power:
+                    power = power.split(',')[0]
+                    
+                dragon = acc.get('dragon', '')
+                if dragon and dragon != '—' and ',' in dragon:
+                    dragon = dragon.split(',')[0]
+                    
+                buffs_stands = acc.get('buffs_stands', '')
+                if buffs_stands and buffs_stands != '—' and ',' in buffs_stands:
+                    buffs_stands = buffs_stands.split(',')[0]
+                    
+                buffs_research = acc.get('buffs_research', '')
+                if buffs_research and buffs_research != '—' and ',' in buffs_research:
+                    buffs_research = buffs_research.split(',')[0]
 
-                pl1 = acc.get('pl1', '')
-                if pl1 and pl1 != '—' and ',' not in pl1:
-                    pl1 = f"{pl1},0"
-
-                pl2 = acc.get('pl2', '')
-                if pl2 and pl2 != '—' and ',' not in pl2:
-                    pl2 = f"{pl2},0"
-
-                pl3 = acc.get('pl3', '')
-                if pl3 and pl3 != '—' and ',' not in pl3:
-                    pl3 = f"{pl3},0"
-
+                # ID имя - оставляем как есть (с @)
+                username = f"@{acc.get('username', '')}" if acc.get('username') else ''
+                
                 user_id = acc.get('user_id')
                 group = user_group.get(user_id, '')
 
-                row_data = [
-                    i,
-                    group,
-                    acc.get('game_nickname', ''),
-                    acc.get('power', ''),
-                    bm,
-                    pl1,
-                    pl2,
-                    pl3,
-                    acc.get('dragon', ''),
-                    acc.get('buffs_stands', ''),
-                    acc.get('buffs_research', ''),
-                    f"@{acc.get('username', '')}" if acc.get('username') else '',
-                    acc.get('user_id', ''),
-                    time_str,
-                    date_str
-                ]
-                
-                for col, value in enumerate(row_data, 1):
-                    cell = ws.cell(row=i+1, column=col, value=value)
-                    if col in [1, 2]:
-                        cell.alignment = Alignment(horizontal='center')
-                    else:
-                        cell.alignment = Alignment(horizontal='left')
+                # В CSV нельзя задать выравнивание, но данные подготовлены
+                writer.writerow([
+                    i,                          # № (число)
+                    group,                       # Группа (число или пусто)
+                    acc.get('game_nickname', ''),# Ник в игре (текст)
+                    power,                       # Эл (число)
+                    bm,                          # БМ (число)
+                    pl1,                         # Пл 1 (число)
+                    pl2,                         # Пл 2 (число)
+                    pl3,                         # Пл 3 (число)
+                    dragon,                      # Др (число)
+                    buffs_stands,                 # БС (число)
+                    buffs_research,               # БИ (число)
+                    username,                     # ID имя (текст) - по левому краю в Excel
+                    user_id,                      # ID номер (число)
+                    time_str,                     # Время (текст)
+                    date_str                      # Дата (текст)
+                ])
 
-            # 🔴 АВТОМАТИЧЕСКАЯ ШИРИНА СТОЛБЦОВ С ОТСТУПАМИ
-            for col in range(1, len(headers) + 1):
-                column_letter = get_column_letter(col)
-                max_length = 0
-                for row in range(1, len(accounts) + 2):
-                    cell_value = ws.cell(row=row, column=col).value
-                    if cell_value:
-                        max_length = max(max_length, len(str(cell_value)))
-                
-                width = max(max_length + 3, 8)
-                ws.column_dimensions[column_letter].width = width
+        logger.info(f"✅ Экспорт CSV: {filepath}")
+        return str(filepath)
+    except Exception as e:
+        logger.error(f"❌ Ошибка экспорта CSV: {e}")
+        return None
 
-            wb.save(filepath)
-            logger.info(f"✅ Экспорт Excel: {filepath}")
-            return str(filepath)
+    def export_to_excel(self, filename: str = None) -> Optional[str]:
+    """Экспорт в Excel с округлением чисел до 0.1 и правильным выравниванием"""
+    if not self.conn:
+        self._connect()
+    
+    # Проверяем наличие openpyxl
+    try:
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+        from openpyxl.styles import Font, PatternFill, Alignment, numbers
+    except ImportError:
+        logger.error("❌ openpyxl не установлен. Установите: pip install openpyxl")
+        return None
+        
+    try:
+        if not filename:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"export_{timestamp}.xlsx"
 
-        except Exception as e:
-            logger.error(f"❌ Ошибка экспорта в Excel: {e}")
-            traceback.print_exc()
+        filepath = EXPORT_DIR / filename
+        accounts = self.get_all_accounts()
+
+        if not accounts:
             return None
+
+        # Подсчет аккаунтов для групп
+        accounts_count = {}
+        for acc in accounts:
+            user_id = acc.get('user_id')
+            if user_id:
+                accounts_count[user_id] = accounts_count.get(user_id, 0) + 1
+
+        # Номера групп для мультиаккаунтов
+        group_number = 1
+        user_group = {}
+        for user_id, count in accounts_count.items():
+            if count > 1:
+                user_group[user_id] = group_number
+                group_number += 1
+
+        # Создаем Excel файл
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Игроки"
+
+        # Заголовки
+        headers = [
+            "№", "Группа", "Ник в игре", "Эл", "БМ", "Пл 1", "Пл 2", "Пл 3",
+            "Др", "БС", "БИ", "ID имя", "ID номер", "Время", "Дата"
+        ]
+        
+        # Стиль для заголовков
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font_white = Font(bold=True, color="FFFFFF")
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = header_font_white
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+
+        # Функция для округления до 0.1
+        def round_to_tenths(val):
+            if not val or val == '—':
+                return ''
+            try:
+                # Заменяем запятую на точку для преобразования
+                val_float = float(val.replace(',', '.'))
+                # Округляем до 1 знака после запятой
+                rounded = round(val_float * 10) / 10
+                return rounded
+            except:
+                return val
+
+        # Данные
+        for i, acc in enumerate(accounts, 1):
+            updated = acc.get('updated_at', '')
+            time_str = '--:--:--'
+            date_str = '--.--.----'
+
+            if updated:
+                try:
+                    dt = datetime.strptime(updated, '%Y-%m-%d %H:%M:%S')
+                    time_str = dt.strftime('%H:%M:%S')
+                    date_str = dt.strftime('%d.%m.%Y')
+                except:
+                    pass
+
+            # ===== ОБРАБОТКА ЧИСЕЛ С ОКРУГЛЕНИЕМ =====
+            # Дробные поля с округлением до 0.1
+            bm = round_to_tenths(acc.get('bm', ''))
+            pl1 = round_to_tenths(acc.get('pl1', ''))
+            pl2 = round_to_tenths(acc.get('pl2', ''))
+            pl3 = round_to_tenths(acc.get('pl3', ''))
+            
+            # Целочисленные поля - преобразуем в int если возможно
+            power = acc.get('power', '')
+            if power and power != '—':
+                try:
+                    power = int(float(power.replace(',', '.')))
+                except:
+                    pass
+                    
+            dragon = acc.get('dragon', '')
+            if dragon and dragon != '—':
+                try:
+                    dragon = int(float(dragon.replace(',', '.')))
+                except:
+                    pass
+                    
+            buffs_stands = acc.get('buffs_stands', '')
+            if buffs_stands and buffs_stands != '—':
+                try:
+                    buffs_stands = int(float(buffs_stands.replace(',', '.')))
+                except:
+                    pass
+                    
+            buffs_research = acc.get('buffs_research', '')
+            if buffs_research and buffs_research != '—':
+                try:
+                    buffs_research = int(float(buffs_research.replace(',', '.')))
+                except:
+                    pass
+
+            user_id = acc.get('user_id')
+            group = user_group.get(user_id, '')
+
+            row_data = [
+                i,                          # №
+                group,                       # Группа
+                acc.get('game_nickname', ''),# Ник в игре
+                power,                       # Эл
+                bm,                          # БМ
+                pl1,                         # Пл 1
+                pl2,                         # Пл 2
+                pl3,                         # Пл 3
+                dragon,                      # Др
+                buffs_stands,                 # БС
+                buffs_research,               # БИ
+                f"@{acc.get('username', '')}" if acc.get('username') else '',  # ID имя
+                acc.get('user_id', ''),       # ID номер
+                time_str,                     # Время
+                date_str                      # Дата
+            ]
+            
+            # Записываем данные и применяем выравнивание
+            for col, value in enumerate(row_data, 1):
+                cell = ws.cell(row=i+1, column=col, value=value)
+                
+                # Применяем выравнивание в зависимости от столбца
+                if col == 12:  # ID имя - по левому краю
+                    cell.alignment = Alignment(horizontal='left')
+                elif col in [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13]:  # Числовые столбцы - по правому краю
+                    cell.alignment = Alignment(horizontal='right')
+                else:  # Остальные (ник, время, дата) - по центру
+                    cell.alignment = Alignment(horizontal='center')
+
+        # АВТОМАТИЧЕСКАЯ ШИРИНА СТОЛБЦОВ С ОТСТУПАМИ
+        for col in range(1, len(headers) + 1):
+            column_letter = get_column_letter(col)
+            max_length = 0
+            for row in range(1, len(accounts) + 2):
+                cell_value = ws.cell(row=row, column=col).value
+                if cell_value:
+                    max_length = max(max_length, len(str(cell_value)))
+            
+            width = max(max_length + 3, 8)
+            ws.column_dimensions[column_letter].width = width
+
+        wb.save(filepath)
+        logger.info(f"✅ Экспорт Excel: {filepath}")
+        return str(filepath)
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка экспорта в Excel: {e}")
+        traceback.print_exc()
+        return None
             
     def restore_from_backup(self, backup_path: Path) -> bool:
         try:
@@ -3439,6 +3527,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
