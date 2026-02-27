@@ -1239,6 +1239,7 @@ async def step_input(message: Message, state: FSMContext):
         await step_next(message, state)
         return
 
+    # Обработка нажатия на цифровые кнопки
     if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
         if message.text == ",":
             if field in ["bm", "pl1", "pl2", "pl3"]:
@@ -1247,19 +1248,11 @@ async def step_input(message: Message, state: FSMContext):
         else:
             step_temp += message.text
         await state.update_data(step_temp=step_temp)
-        current_task = data.get("show_task")
-        if current_task:
-            current_task.cancel()
-
-        async def show_value():
-            await asyncio.sleep(0.5)
-            new_data = await state.get_data()
-            new_temp = new_data.get("step_temp", "")
-            if new_temp == step_temp:
-                await message.answer(f"📝 Текущее значение: {step_temp}")
-
-        task = asyncio.create_task(show_value())
-        await state.update_data(show_task=task)
+        
+        # Показываем текущее значение
+        await message.answer(f"📝 Текущее значение: {step_temp}")
+        
+        # НЕ создаем задачу для отложенного показа, сразу показываем
         return
 
     if message.text == "⌫":
@@ -1279,7 +1272,10 @@ async def step_input(message: Message, state: FSMContext):
             await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
             return
     else:
+        # Если это не специальная кнопка, значит пользователь ввел текст с клавиатуры
         value = message.text.strip()
+        # Сразу переходим к обработке значения, без ожидания "✅ Готово"
+        await state.update_data(step_temp="")  # Очищаем временное значение
 
     if not value:
         await message.answer("❌ Значение не может быть пустым. Введите число или нажмите «⏭ Пропустить»")
@@ -1304,6 +1300,7 @@ async def step_input(message: Message, state: FSMContext):
     step_data[field] = value
     await message.answer(f"✅ {field_name}: {value}")
 
+    # Переходим к следующему шагу
     await state.update_data(
         step_data=step_data,
         step_index=data.get("step_index", 0) + 1,
@@ -2711,3 +2708,4 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
