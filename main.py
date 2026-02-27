@@ -2135,7 +2135,7 @@ async def db_restore_menu(callback: CallbackQuery):
 # ========== ВОССТАНОВЛЕНИЕ ИЗ БЭКАПА (СЕРВЕР) ==========
 @router.callback_query(F.data.startswith("db_restore_"))
 async def db_restore_handler(callback: CallbackQuery):
-    """Восстановление из выбранного бэкапа"""
+   """Восстановление из выбранного бэкапа"""
     print("\n" + "="*50)
     print("🟡🟡🟡 db_restore_handler ВЫЗВАН! 🟡🟡🟡")
     print(f"   callback.data = '{callback.data}'")
@@ -2147,11 +2147,18 @@ async def db_restore_handler(callback: CallbackQuery):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
     
+    # 🔴 ИЗМЕНЕНИЕ: сначала проверяем точное совпадение с "db_restore_pc"
+    if callback.data == "db_restore_pc":
+        print("🔴🔴🔴 Это кнопка 'Загрузить с ПК' - передаем в другой обработчик! 🔴🔴🔴")
+        # Создаем новый callback с теми же данными, но aiogram сам вызовет нужный обработчик
+        # Просто выходим, чтобы сработал другой обработчик
+        return
+    
     backup_name = callback.data.replace("db_restore_", "")
     print(f"📦 backup_name = '{backup_name}'")
     
     # Проверяем, не является ли это пагинацией или другим действием
-    if backup_name in ["menu", "pc", "confirm"]:
+    if backup_name in ["menu", "confirm"]:  # 🔴 убрали 'pc' из списка
         print(f"⏭️ Игнорируем: {backup_name} не является бэкапом")
         return
     
@@ -2880,4 +2887,5 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
