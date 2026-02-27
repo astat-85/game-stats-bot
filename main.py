@@ -2,7 +2,7 @@
 """
 Telegram Bot для сбора игровых данных
 АДАПТИРОВАНО ДЛЯ BOTHOST.RU
-ИСПРАВЛЕННАЯ ВЕРСИЯ
+ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ
 """
 
 import sqlite3
@@ -182,6 +182,9 @@ RATE_LIMIT_WINDOW = 60
 ACCOUNTS_PER_PAGE = 10
 MAX_BATCH_DELETE = 20
 
+# Глобальная переменная для отмены восстановления
+cancel_restore = False
+
 # ========== RATE LIMITER ==========
 class RateLimiter:
     def __init__(self):
@@ -237,10 +240,11 @@ class Database:
 
         self.conn = None
         self.cursor = None
-        self._connect()
-
-        if not self.db_path.exists():
-            print(f"📁 Создана новая БД: {self.db_path}")
+        # Не подключаемся сразу, чтобы проверить наличие БД
+        if self.db_path.exists():
+            self._connect()
+        else:
+            print(f"📁 Файл БД не найден, будет создан при первом обращении")
 
     def _connect(self):
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=10)
@@ -315,6 +319,9 @@ class Database:
             self.last_cache_update = 0
 
     def get_user_accounts_cached(self, user_id: int) -> List[Dict]:
+        if not self.conn:
+            self._connect()
+            
         cache_key = f"user_{user_id}"
 
         with self.cache_lock:
@@ -332,6 +339,9 @@ class Database:
 
     @retry_on_db_lock()
     def get_user_accounts(self, user_id: int) -> List[Dict]:
+        if not self.conn:
+            self._connect()
+            
         try:
             self._execute("""
             SELECT id, game_nickname, power, bm, pl1, pl2, pl3,
@@ -347,6 +357,9 @@ class Database:
 
     @retry_on_db_lock()
     def get_account_by_id(self, account_id: int) -> Optional[Dict]:
+        if not self.conn:
+            self._connect()
+            
         try:
             self._execute("SELECT * FROM users WHERE id = ?", (account_id,))
             row = self.cursor.fetchone()
@@ -356,6 +369,9 @@ class Database:
             return None
 
     def is_nickname_taken(self, user_id: int, nickname: str, exclude_id: int = None) -> bool:
+        if not self.conn:
+            self._connect()
+            
         try:
             nickname = nickname.strip().lower()
             query = "SELECT id FROM users WHERE user_id = ? AND LOWER(TRIM(game_nickname)) = ?"
@@ -375,6 +391,9 @@ class Database:
     def create_or_update_account(self, user_id: int, username: str,
                                   game_nickname: str, field_key: str = None,
                                   value: str = None) -> Optional[Dict]:
+        if not self.conn:
+            self._connect()
+            
         try:
             self._execute(
                 "SELECT id, game_nickname FROM users WHERE user_id = ? AND game_nickname = ?",
@@ -443,6 +462,9 @@ class Database:
 
     @retry_on_db_lock()
     def delete_account(self, account_id: int) -> bool:
+        if not self.conn:
+            self._connect()
+            
         try:
             self._execute("DELETE FROM users WHERE id = ?", (account_id,))
             self.conn.commit()
@@ -454,6 +476,9 @@ class Database:
 
     @retry_on_db_lock()
     def get_all_accounts(self) -> List[Dict]:
+        if not self.conn:
+            self._connect()
+            
         try:
             self._execute("""
             SELECT
@@ -477,6 +502,9 @@ class Database:
             return []
 
     def get_stats(self) -> Dict[str, Any]:
+        if not self.conn:
+            self._connect()
+            
         now = time.time()
 
         with self.cache_lock:
@@ -506,6 +534,9 @@ class Database:
             return {"unique_users": 0, "total_accounts": 0, "avg_accounts_per_user": 0}
 
     def create_backup(self, filename: str = None) -> Optional[str]:
+        if not self.conn:
+            self._connect()
+            
         try:
             if not filename:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -530,6 +561,9 @@ class Database:
             return None
 
     def export_to_csv(self, filename: str = None) -> Optional[str]:
+        if not self.conn:
+            self._connect()
+            
         try:
             if not filename:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -620,6 +654,9 @@ class Database:
             return False
 
     def check_integrity(self) -> bool:
+        if not self.conn:
+            self._connect()
+            
         try:
             self._execute("PRAGMA integrity_check")
             return self.cursor.fetchone()[0] == "ok"
@@ -627,6 +664,9 @@ class Database:
             return False
 
     def maybe_vacuum(self):
+        if not self.conn:
+            self._connect()
+            
         if (datetime.now() - self.last_vacuum).days >= 7:
             try:
                 self._execute("VACUUM")
@@ -653,8 +693,10 @@ class Database:
     def close(self):
         try:
             with self.lock:
-                self.conn.commit()
-                self.conn.close()
+                if self.conn:
+                    self.conn.commit()
+                    self.conn.close()
+                    self.conn = None
         except:
             pass
 
@@ -686,13 +728,22 @@ def get_main_kb(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_numeric_kb(decimal: bool = True) -> ReplyKeyboardMarkup:
-    kb = [
-        [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
-        [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
-        [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
-        [KeyboardButton(text="0"), KeyboardButton(text="," if decimal else "⌫"), KeyboardButton(text="⌫")],
-        [KeyboardButton(text="🏁 Завершить"), KeyboardButton(text="⏭ Пропустить"), KeyboardButton(text="✅ Готово")]
-    ]
+    if decimal:
+        kb = [
+            [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
+            [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
+            [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
+            [KeyboardButton(text="0"), KeyboardButton(text=","), KeyboardButton(text="⌫")],
+            [KeyboardButton(text="🏁 Завершить"), KeyboardButton(text="⏭ Пропустить"), KeyboardButton(text="✅ Готово")]
+        ]
+    else:
+        kb = [
+            [KeyboardButton(text="1"), KeyboardButton(text="2"), KeyboardButton(text="3")],
+            [KeyboardButton(text="4"), KeyboardButton(text="5"), KeyboardButton(text="6")],
+            [KeyboardButton(text="7"), KeyboardButton(text="8"), KeyboardButton(text="9")],
+            [KeyboardButton(text="0"), KeyboardButton(text="⌫"), KeyboardButton(text="⌫")],
+            [KeyboardButton(text="🏁 Завершить"), KeyboardButton(text="⏭ Пропустить"), KeyboardButton(text="✅ Готово")]
+        ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_cancel_kb() -> ReplyKeyboardMarkup:
@@ -1023,8 +1074,17 @@ async def help_cmd(message: Message):
 
 @router.message(Command("cancel"))
 async def cancel_cmd(message: Message, state: FSMContext):
+    """Отмена текущего действия"""
+    user_id = message.from_user.id
+    
+    global cancel_restore
+    if is_admin(user_id):
+        # Если админ отменяет восстановление при запуске
+        cancel_restore = True
+        await message.answer("❌ Восстановление отменено. Будет создана новая пустая БД.")
+    
     await state.clear()
-    await message.answer("❌ Отменено", reply_markup=get_main_kb(message.from_user.id))
+    await message.answer("❌ Отменено", reply_markup=get_main_kb(user_id))
 
 @router.message(Command("myid"))
 async def myid_cmd(message: Message):
@@ -1061,6 +1121,7 @@ async def restore_command(message: Message, state: FSMContext):
         "4️⃣ Отправьте его"
     )
     await state.set_state(EditState.waiting_for_backup)
+    await state.update_data(restore_mode="command")
 
 # ========== ОСНОВНЫЕ КНОПКИ ==========
 @router.message(F.text == "📊 Мои аккаунты")
@@ -1151,8 +1212,7 @@ async def step_start(callback: CallbackQuery, state: FSMContext):
         step_index=0,
         step_steps=steps,
         step_data={},
-        step_temp="",
-        show_task=None
+        step_temp=""
     )
 
     await step_next(callback.message, state)
@@ -1257,28 +1317,15 @@ async def step_input(message: Message, state: FSMContext):
             await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
             return
     else:
-        # ===== ЗДЕСЬ ГЛАВНОЕ ИЗМЕНЕНИЕ =====
-        # Если пользователь ввел число с обычной клавиатуры (не нажимал кнопки меню)
-        # ИЛИ нажал цифровую кнопку на клавиатуре бота
+        # Любой другой ввод (цифровые кнопки или клавиатура) считаем значением
         value = message.text.strip()
-        
-        # Проверяем, является ли ввод числом (для цифровых полей)
-        if field in ["power", "bm", "dragon", "stands", "research", "pl1", "pl2", "pl3"]:
-            # Если это цифровая кнопка из меню, то message.text будет "5", "6" и т.д.
-            # Если это ввод с клавиатуры, тоже текст
-            # В любом случае, обрабатываем как значение
-            pass
-        else:
-            # Для нечисловых полей просто берем текст
-            pass
-        
         await state.update_data(step_temp="")
 
-    # ===== ВАЛИДАЦИЯ =====
     if not value:
         await message.answer("❌ Значение не может быть пустым. Введите число или нажмите «⏭ Пропустить»")
         return
 
+    # Валидация числовых полей
     if field in ["power", "bm", "dragon", "stands", "research", "pl1", "pl2", "pl3"]:
         value = value.replace('.', ',')
         
@@ -1293,15 +1340,13 @@ async def step_input(message: Message, state: FSMContext):
         
         value = cleaned_value
 
-    # ===== СОХРАНЯЕМ И ПЕРЕХОДИМ =====
     step_data[field] = value
     await message.answer(f"✅ {field_name}: {value}")
 
     # Переходим к следующему шагу
-    new_index = data.get("step_index", 0) + 1
     await state.update_data(
         step_data=step_data,
-        step_index=new_index,
+        step_index=data.get("step_index", 0) + 1,
         step_temp=""
     )
     await step_next(message, state)
@@ -1399,19 +1444,7 @@ async def process_input(message: Message, state: FSMContext):
         else:
             temp += message.text
         await state.update_data(temp=temp)
-        current_task = data.get("show_task")
-        if current_task:
-            current_task.cancel()
-
-        async def show_value():
-            await asyncio.sleep(0.5)
-            new_data = await state.get_data()
-            new_temp = new_data.get("temp", "")
-            if new_temp == temp:
-                await message.answer(f"📝 Текущее значение: {temp}")
-
-        task = asyncio.create_task(show_value())
-        await state.update_data(show_task=task)
+        await message.answer(f"📝 Текущее значение: {temp}")
         return
 
     if message.text == "⌫":
@@ -1489,7 +1522,6 @@ async def process_input(message: Message, state: FSMContext):
             
             success, error_msg, cleaned_value = validate_numeric_input(field, value)
             if not success:
-                # Определяем тип клавиатуры для повторного ввода
                 if field in ["bm", "pl1", "pl2", "pl3"]:
                     kb = get_numeric_kb(decimal=True)
                 else:
@@ -1519,59 +1551,74 @@ async def handle_backup_file(message: Message, state: FSMContext):
         await state.clear()
         return
     
+    data = await state.get_data()
+    restore_mode = data.get("restore_mode", "pc")
+    
     if not message.document.file_name.endswith('.db'):
         await message.answer("❌ Нужен файл с расширением .db")
         await state.clear()
         return
     
-    await message.answer("🔄 Загружаю и восстанавливаю бэкап...")
+    status_msg = await message.answer("🔄 Загружаю и восстанавливаю бэкап...")
     
     try:
+        # Скачиваем файл
         file = await bot.get_file(message.document.file_id)
         downloaded_file = await bot.download_file(file.file_path)
         
+        # Создаем временный файл
         temp_path = BACKUP_DIR / f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
         with open(temp_path, 'wb') as f:
             f.write(downloaded_file.getvalue())
         
+        # Создаем бэкап текущей БД
         current_backup = BACKUP_DIR / f"before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        shutil.copy2(db.db_path, current_backup)
+        if db.db_path.exists():
+            shutil.copy2(db.db_path, current_backup)
         
+        # Восстанавливаем
         db.close()
         shutil.copy2(temp_path, db.db_path)
         db._connect()
         
+        # Проверяем целостность
         if db.check_integrity():
             accounts = db.get_all_accounts()
             if accounts:
-                await message.answer(
+                await status_msg.edit_text(
                     f"✅ База данных восстановлена!\n\n"
                     f"📊 Загружено {len(accounts)} аккаунтов\n"
-                    f"💾 Предыдущая БД сохранена как: {current_backup.name}\n\n"
-                    f"👑 Нажмите /admin для проверки"
+                    f"💾 Предыдущая БД сохранена как: {current_backup.name}"
                 )
             else:
+                # Откатываем если нет данных
+                if current_backup.exists():
+                    db.close()
+                    shutil.copy2(current_backup, db.db_path)
+                    db._connect()
+                await status_msg.edit_text("❌ В загруженном файле нет данных. Восстановлена предыдущая БД.")
+        else:
+            # Откатываем если файл поврежден
+            if current_backup.exists():
+                db.close()
                 shutil.copy2(current_backup, db.db_path)
                 db._connect()
-                await message.answer(
-                    "❌ В загруженном файле нет данных.\n"
-                    "База возвращена к предыдущему состоянию."
-                )
-        else:
-            shutil.copy2(current_backup, db.db_path)
-            db._connect()
-            await message.answer(
-                "❌ Загруженный файл поврежден.\n"
-                "База возвращена к предыдущему состоянию."
-            )
+            await status_msg.edit_text("❌ Загруженный файл поврежден. Восстановлена предыдущая БД.")
         
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        logger.error(f"Ошибка восстановления: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {e}")
         try:
             db._connect()
         except:
             pass
     finally:
+        # Очищаем временный файл
+        try:
+            if 'temp_path' in locals() and temp_path.exists():
+                temp_path.unlink()
+        except:
+            pass
         await state.clear()
 
 # ========== ОБЩИЙ ХЕНДЛЕР ==========
@@ -1648,8 +1695,7 @@ async def new_account(callback: CallbackQuery, state: FSMContext):
         field="nick",
         new=True,
         first=len(db.get_user_accounts(callback.from_user.id)) == 0,
-        temp="",
-        show_task=None
+        temp=""
     )
     await callback.answer()
 
@@ -1698,8 +1744,7 @@ async def edit_nick(callback: CallbackQuery, state: FSMContext):
     await state.update_data(
         field="nick",
         account_id=account_id,
-        temp="",
-        show_task=None
+        temp=""
     )
     await callback.answer()
 
@@ -1781,8 +1826,7 @@ async def edit_field(callback: CallbackQuery, state: FSMContext):
     await state.update_data(
         field=field,
         account_id=account_id,
-        temp="",
-        show_task=None
+        temp=""
     )
     await callback.answer()
 
@@ -2065,13 +2109,6 @@ async def db_restore_menu(callback: CallbackQuery):
             )
         ])
     
-    # Добавляем навигацию если много бэкапов
-    if len(all_backups) > 10:
-        buttons.append([
-            InlineKeyboardButton(text="1-10", callback_data="noop"),
-            InlineKeyboardButton(text="▶️", callback_data="db_restore_page_2")
-        ])
-    
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")])
     
     await callback.message.edit_text(
@@ -2092,7 +2129,7 @@ async def db_restore_handler(callback: CallbackQuery):
     
     backup_name = callback.data.replace("db_restore_", "")
     # Проверяем, не является ли это пагинацией или другим действием
-    if backup_name in ["menu", "pc", "confirm"] or backup_name.startswith("page_"):
+    if backup_name in ["menu", "pc", "confirm"]:
         return
     
     backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
@@ -2187,9 +2224,9 @@ async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
         return
     
     await callback.answer()
-    await callback.message.delete()
     
-    await callback.message.answer(
+    # Не удаляем, а редактируем сообщение
+    await callback.message.edit_text(
         "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
         "1️⃣ Нажмите на скрепку 📎\n"
         "2️⃣ Выберите 'Документ'\n"
@@ -2201,7 +2238,10 @@ async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
         ])
     )
     
+    # Очищаем состояние перед установкой нового
+    await state.clear()
     await state.set_state(EditState.waiting_for_backup)
+    await state.update_data(restore_mode="pc")
 
 # ========== АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data.startswith("admin_table_"))
@@ -2654,6 +2694,102 @@ async def admin_back(callback: CallbackQuery):
 async def noop(callback: CallbackQuery):
     await callback.answer()
 
+# ========== ПРОВЕРКА БД ПРИ ЗАПУСКЕ ==========
+async def notify_admin(message: str):
+    """Отправляет уведомление админам"""
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, message)
+        except:
+            pass
+
+async def check_database_on_startup():
+    """Проверяет БД при запуске и спрашивает админа"""
+    global cancel_restore
+    
+    # Проверяем существует ли файл БД
+    db_exists = db.db_path.exists()
+    db_size = db.db_path.stat().st_size if db_exists else 0
+    db_empty = not db_exists or db_size == 0
+    
+    # Подключаемся к БД если файл существует
+    if db_exists and not db_empty:
+        db._connect()
+    
+    # Проверяем есть ли данные в текущей БД
+    has_data = False
+    if db_exists and not db_empty:
+        try:
+            accounts = db.get_all_accounts()
+            has_data = len(accounts) > 0
+        except:
+            has_data = False
+    
+    # Проверяем есть ли бэкапы
+    backups = sorted(BACKUP_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
+    has_backups = len(backups) > 0
+    
+    # Логируем информацию
+    print(f"\n📊 ПРОВЕРКА БД:")
+    print(f"   Файл существует: {db_exists}")
+    print(f"   Размер: {db_size} байт")
+    print(f"   Есть данные: {has_data}")
+    print(f"   Бэкапов найдено: {len(backups)}")
+    
+    # Если БД пустая или не существует
+    if not has_data:
+        print("⚠️ БД пустая или отсутствует!")
+        
+        # Если есть бэкапы - предлагаем восстановить
+        if has_backups:
+            print(f"✅ Найдены бэкапы! Последний: {backups[0].name}")
+            
+            # Отправляем сообщение админам
+            await notify_admin(
+                f"⚠️ <b>База данных пуста или отсутствует!</b>\n\n"
+                f"📦 Найден бэкап: {backups[0].name}\n"
+                f"📅 Дата: {datetime.fromtimestamp(backups[0].stat().st_mtime).strftime('%d.%m.%Y %H:%M')}\n"
+                f"📊 Размер: {backups[0].stat().st_size / 1024:.1f} KB\n\n"
+                f"🔄 Бот автоматически восстановит БД из последнего бэкапа через 10 секунд.\n"
+                f"❌ Чтобы отменить восстановление и создать новую БД, отправьте /cancel"
+            )
+            
+            # Ждем 10 секунд возможность отмены
+            cancel_restore = False
+            for i in range(10, 0, -1):
+                if cancel_restore:
+                    print("⏹️ Восстановление отменено пользователем")
+                    await notify_admin("❌ Восстановление отменено. Будет создана новая пустая БД.")
+                    break
+                print(f"⏳ Восстановление через {i} секунд. Отправьте /cancel для отмены...")
+                await asyncio.sleep(1)
+            
+            if not cancel_restore:
+                # Восстанавливаем из последнего бэкапа
+                print(f"🔄 Восстанавливаю из {backups[0].name}...")
+                if db.restore_from_backup(backups[0]):
+                    print(f"✅ БД восстановлена из бэкапа!")
+                    await notify_admin(f"✅ БД успешно восстановлена из бэкапа {backups[0].name}")
+                else:
+                    print(f"❌ Ошибка восстановления из бэкапа!")
+                    await notify_admin(f"❌ Ошибка восстановления из бэкапа!")
+                    
+                    # Если не удалось восстановить - создаем новую
+                    print(f"🆕 Создаю новую пустую БД...")
+                    db._connect()
+                    db._create_tables()
+                    await notify_admin(f"🆕 Создана новая пустая БД")
+        else:
+            # Если нет бэкапов - просто создаем новую БД
+            print(f"🆕 Бэкапов нет. Создаю новую пустую БД...")
+            db._connect()
+            db._create_tables()
+            await notify_admin(f"🆕 Создана новая пустая БД (бэкапов не найдено)")
+    else:
+        print(f"✅ БД в порядке. Данных: {len(db.get_all_accounts())} аккаунтов")
+    
+    print("-" * 50)
+
 # ========== ЗАПУСК ==========
 async def main():
     print("=" * 50)
@@ -2665,21 +2801,11 @@ async def main():
     print(f"📌 Тема: {TARGET_TOPIC_ID if USE_TOPIC else 'нет'}")
     print("-" * 50)
 
-    # Проверка целостности БД
-    if not db.check_integrity():
-        print("⚠️ Проблемы с БД, попытка восстановления...")
-        # Ищем последний бэкап
-        backups = sorted(BACKUP_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
-        if backups:
-            if db.restore_from_backup(backups[0]):
-                print(f"✅ БД восстановлена из {backups[0].name}")
-            else:
-                print("❌ Не удалось восстановить БД")
-        else:
-            print("❌ Бэкапов не найдено")
+    # Проверяем БД при запуске
+    await check_database_on_startup()
 
     stats = db.get_stats()
-    print(f"📊 Пользователей: {stats['unique_users']}, Аккаунтов: {stats['total_accounts']}")
+    print(f"📊 Итог: Пользователей: {stats['unique_users']}, Аккаунтов: {stats['total_accounts']}")
     print("-" * 50)
 
     # Очистка старых файлов
@@ -2706,6 +2832,3 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
-
-
-
