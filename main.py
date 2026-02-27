@@ -2992,6 +2992,152 @@ async def admin_back(callback: CallbackQuery):
 async def noop(callback: CallbackQuery):
     await callback.answer()
 
+@router.callback_query(F.data.startswith("restore_"))
+async def handle_restore_choice(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора админа при запуске"""
+    print(f"\n🔵🔵🔵 handle_restore_choice: {callback.data} 🔵🔵🔵")
+    
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    if callback.data == "restore_from_pc":
+        # Загрузка с ПК
+        await callback.message.edit_text(
+            "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
+            "1️⃣ Нажмите на скрепку 📎\n"
+            "2️⃣ Выберите 'Документ'\n"
+            "3️⃣ Найдите файл .db на вашем компьютере\n"
+            "4️⃣ Отправьте его\n\n"
+            "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="restore_cancel")]
+            ])
+        )
+        await state.set_state(EditState.waiting_for_backup)
+        await state.update_data(restore_mode="startup")
+        
+    elif callback.data == "restore_from_backup":
+        # Восстановление из существующего бэкапа
+        backups = sorted(BACKUP_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
+        root_backups = sorted(BASE_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
+        all_backups = backups + root_backups
+        
+        if not all_backups:
+            await callback.message.edit_text(
+                "❌ Нет доступных бэкапов.\n\n"
+                "Будет создана новая пустая БД.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🆕 Создать новую БД", callback_data="restore_new_db")]
+                ])
+            )
+            return
+        
+        buttons = []
+        for i, backup in enumerate(all_backups[:5]):
+            try:
+                mtime = backup.stat().st_mtime
+                date_str = datetime.fromtimestamp(mtime).strftime('%d.%m.%Y %H:%M')
+                size = backup.stat().st_size / 1024
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=f"📅 {date_str} ({size:.1f} KB)",
+                        callback_data=f"restore_backup_file_{backup.name}"
+                    )
+                ])
+            except:
+                pass
+        
+        buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="restore_cancel")])
+        
+        await callback.message.edit_text(
+            "📥 <b>Выберите бэкап для восстановления:</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+        
+    elif callback.data == "restore_new_db":
+        # Создание новой БД
+        await callback.message.edit_text("🆕 Создаю новую пустую базу данных...")
+        db._connect()
+        db._create_tables()
+        await callback.message.edit_text(
+            "✅ Создана новая пустая база данных.\n\n"
+            "Бот продолжает работу."
+        )
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    "🤖 Бот готов к работе!",
+                    reply_markup=get_main_kb(admin_id)
+                )
+            except:
+                pass
+                
+    elif callback.data.startswith("restore_backup_file_"):
+        backup_name = callback.data.replace("restore_backup_file_", "")
+        backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
+        
+        await callback.message.edit_text("🔄 Восстановление...")
+        
+        try:
+            current_backup = BACKUP_DIR / f"before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            if db.db_path.exists():
+                shutil.copy2(db.db_path, current_backup)
+            
+            db.close()
+            shutil.copy2(backup_path, db.db_path)
+            db._connect()
+            
+            if db.check_integrity():
+                accounts = db.get_all_accounts()
+                await callback.message.edit_text(
+                    f"✅ База данных восстановлена из {backup_name}\n\n"
+                    f"📊 Загружено {len(accounts)} аккаунтов\n\n"
+                    f"🤖 Бот готов к работе!"
+                )
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            admin_id,
+                            "🤖 Бот готов к работе!",
+                            reply_markup=get_main_kb(admin_id)
+                        )
+                    except:
+                        pass
+            else:
+                await callback.message.edit_text(
+                    "❌ Ошибка: восстановленный файл поврежден.\n\n"
+                    "Будет создана новая пустая БД."
+                )
+                db._connect()
+                db._create_tables()
+        except Exception as e:
+            await callback.message.edit_text(f"❌ Ошибка: {e}")
+            db._connect()
+            db._create_tables()
+    
+    elif callback.data == "restore_cancel":
+        # Отмена - создаем новую БД
+        await callback.message.edit_text("🆕 Создаю новую пустую базу данных...")
+        db._connect()
+        db._create_tables()
+        await callback.message.edit_text(
+            "✅ Создана новая пустая база данных.\n\n"
+            "Бот продолжает работу."
+        )
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    "🤖 Бот готов к работе!",
+                    reply_markup=get_main_kb(admin_id)
+                )
+            except:
+                pass
+
 # ========== ПРОВЕРКА БД ПРИ ЗАПУСКЕ ==========
 async def notify_admin(message: str):
     """Отправляет уведомление админам"""
@@ -3001,8 +3147,32 @@ async def notify_admin(message: str):
         except:
             pass
 
+async def ask_admin_what_to_do():
+    """Спрашивает админа, что делать с пустой БД"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📤 Загрузить с ПК", callback_data="restore_from_pc"),
+            InlineKeyboardButton(text="💾 Из бэкапа", callback_data="restore_from_backup")
+        ],
+        [
+            InlineKeyboardButton(text="🆕 Начать с нуля", callback_data="restore_new_db")
+        ]
+    ])
+    
+    # Отправляем сообщение всем админам
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                admin_id,
+                "⚠️ <b>База данных пуста или отсутствует!</b>\n\n"
+                "Выберите действие:",
+                reply_markup=keyboard
+            )
+        except:
+            pass
+
 async def check_database_on_startup():
-    """Проверяет БД при запуске и спрашивает админа"""
+    """Проверяет БД при запуске и спрашивает админа, что делать"""
     global cancel_restore
     
     # Проверяем существует ли файл БД
@@ -3038,51 +3208,18 @@ async def check_database_on_startup():
     if not has_data:
         print("⚠️ БД пустая или отсутствует!")
         
-        # Если есть бэкапы - предлагаем восстановить
-        if has_backups:
-            print(f"✅ Найдены бэкапы! Последний: {backups[0].name}")
+        if ADMIN_IDS:
+            # Спрашиваем админа, что делать
+            print("👑 Спрашиваю админов...")
+            await ask_admin_what_to_do()
             
-            # Отправляем сообщение админам
-            await notify_admin(
-                f"⚠️ <b>База данных пуста или отсутствует!</b>\n\n"
-                f"📦 Найден бэкап: {backups[0].name}\n"
-                f"📅 Дата: {datetime.fromtimestamp(backups[0].stat().st_mtime).strftime('%d.%m.%Y %H:%M')}\n"
-                f"📊 Размер: {backups[0].stat().st_size / 1024:.1f} KB\n\n"
-                f"🔄 Бот автоматически восстановит БД из последнего бэкапа через 10 секунд.\n"
-                f"❌ Чтобы отменить восстановление и создать новую БД, отправьте /cancel"
-            )
-            
-            # Ждем 10 секунд возможность отмены
-            cancel_restore = False
-            for i in range(10, 0, -1):
-                if cancel_restore:
-                    print("⏹️ Восстановление отменено пользователем")
-                    await notify_admin("❌ Восстановление отменено. Будет создана новая пустая БД.")
-                    break
-                print(f"⏳ Восстановление через {i} секунд. Отправьте /cancel для отмены...")
-                await asyncio.sleep(1)
-            
-            if not cancel_restore:
-                # Восстанавливаем из последнего бэкапа
-                print(f"🔄 Восстанавливаю из {backups[0].name}...")
-                if db.restore_from_backup(backups[0]):
-                    print(f"✅ БД восстановлена из бэкапа!")
-                    await notify_admin(f"✅ БД успешно восстановлена из бэкапа {backups[0].name}")
-                else:
-                    print(f"❌ Ошибка восстановления из бэкапа!")
-                    await notify_admin(f"❌ Ошибка восстановления из бэкапа!")
-                    
-                    # Если не удалось восстановить - создаем новую
-                    print(f"🆕 Создаю новую пустую БД...")
-                    db._connect()
-                    db._create_tables()
-                    await notify_admin(f"🆕 Создана новая пустая БД")
+            # Ждем ответа от админа (бот продолжит работу, а выбор обработается в колбэке)
+            print("⏳ Ожидание выбора админа...")
         else:
-            # Если нет бэкапов - просто создаем новую БД
-            print(f"🆕 Бэкапов нет. Создаю новую пустую БД...")
+            # Если админов нет - создаем новую БД
+            print("⚠️ Админы не настроены. Создаю новую пустую БД...")
             db._connect()
             db._create_tables()
-            await notify_admin(f"🆕 Создана новая пустая БД (бэкапов не найдено)")
     else:
         print(f"✅ БД в порядке. Данных: {len(db.get_all_accounts())} аккаунтов")
     
@@ -3130,6 +3267,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
