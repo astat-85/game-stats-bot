@@ -2574,11 +2574,11 @@ async def confirm_del(callback: CallbackQuery):
     
     await callback.answer()
 
-@router.callback_query(F.data.startswith("confirm_del_"))
-aasync def confirm_del(callback: CallbackQuery):
-    """Подтверждение удаления аккаунта админом"""
+@router.callback_query(F.data.startswith("admin_del_"))
+async def admin_del_account(callback: CallbackQuery):
+    """Обработка выбора аккаунта для удаления"""
     print("\n" + "="*50)
-    print("🗑️🗑️🗑️ confirm_del ВЫЗВАН! 🗑️🗑️🗑️")
+    print("🗑️🗑️🗑️ admin_del_account ВЫЗВАН! 🗑️🗑️🗑️")
     print(f"   callback.data = '{callback.data}'")
     print(f"   user_id = {callback.from_user.id}")
     print("="*50)
@@ -2588,12 +2588,13 @@ aasync def confirm_del(callback: CallbackQuery):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
+    # Парсим данные: admin_del_123_1
     parts = callback.data.split("_")
     if len(parts) < 4:
         print(f"❌ Неверный формат: {parts}")
         await callback.answer("❌ Неверный формат данных", show_alert=True)
         return
-        
+
     try:
         account_id = int(parts[2])
         page = int(parts[3])
@@ -2603,37 +2604,28 @@ aasync def confirm_del(callback: CallbackQuery):
         await callback.answer("❌ Неверный ID или страница", show_alert=True)
         return
 
+    # Получаем аккаунт
     account = db.get_account_by_id(account_id)
     if not account:
         print(f"❌ Аккаунт {account_id} не найден")
         await callback.answer("❌ Аккаунт не найден", show_alert=True)
         return
-    
-    print(f"📋 Аккаунт для удаления: {account.get('game_nickname')} (ID: {account_id})")
 
-    if db.delete_account(account_id):
-        print(f"✅ Аккаунт {account_id} успешно удален")
-        db.invalidate_cache()
-        
-        remaining = db.get_all_accounts()
-        print(f"📊 Осталось аккаунтов в БД: {len(remaining)}")
-        
-        await callback.message.edit_text(
-            f"✅ Аккаунт {account['game_nickname']} (ID:{account_id}) удален",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📋 Обновить таблицу", callback_data=f"admin_table_{page}")],
-                [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_back")]
-            ])
-        )
-    else:
-        print(f"❌ Ошибка при удалении аккаунта {account_id}")
-        await callback.message.edit_text(
-            "❌ Ошибка удаления",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_table_{page}")]
-            ])
-        )
-    
+    print(f"📋 Аккаунт: {account.get('game_nickname')}")
+
+    # Показываем подтверждение
+    await callback.message.edit_text(
+        f"🗑️ <b>Подтверждение удаления</b>\n\n"
+        f"Аккаунт: {account['game_nickname']}\n"
+        f"ID: {account_id}\n\n"
+        f"Вы уверены, что хотите удалить этот аккаунт?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_del_{account_id}_{page}"),
+                InlineKeyboardButton(text="❌ Нет, отмена", callback_data=f"admin_show_delete_menu_page_{page}")
+            ]
+        ])
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "admin_batch")
@@ -3138,6 +3130,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
