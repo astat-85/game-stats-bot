@@ -2519,19 +2519,16 @@ async def confirm_del(callback: CallbackQuery):
     print("🗑️🗑️🗑️ confirm_del ВЫЗВАН! 🗑️🗑️🗑️")
     print(f"   callback.data = '{callback.data}'")
     print(f"   user_id = {callback.from_user.id}")
-    print(f"   is_admin = {is_admin(callback.from_user.id)}")
     print("="*50)
     
-    # 🔴 ПРОВЕРКА НА АДМИНА
     if not is_admin(callback.from_user.id):
-        print("❌ ДОСТУП ЗАПРЕЩЕН - не админ")
+        print("❌ ДОСТУП ЗАПРЕЩЕН")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
-    # Парсим данные из callback
     parts = callback.data.split("_")
     if len(parts) < 4:
-        print(f"❌ Неверный формат callback: {parts}")
+        print(f"❌ Неверный формат: {parts}")
         await callback.answer("❌ Неверный формат данных", show_alert=True)
         return
         
@@ -2544,7 +2541,6 @@ async def confirm_del(callback: CallbackQuery):
         await callback.answer("❌ Неверный ID или страница", show_alert=True)
         return
 
-    # Получаем аккаунт из БД
     account = db.get_account_by_id(account_id)
     if not account:
         print(f"❌ Аккаунт {account_id} не найден")
@@ -2553,16 +2549,75 @@ async def confirm_del(callback: CallbackQuery):
     
     print(f"📋 Аккаунт для удаления: {account.get('game_nickname')} (ID: {account_id})")
 
-    # Удаляем аккаунт
     if db.delete_account(account_id):
         print(f"✅ Аккаунт {account_id} успешно удален")
         db.invalidate_cache()
         
-        # Проверяем остались ли аккаунты
         remaining = db.get_all_accounts()
         print(f"📊 Осталось аккаунтов в БД: {len(remaining)}")
         
-        # Показываем сообщение об успешном удалении
+        await callback.message.edit_text(
+            f"✅ Аккаунт {account['game_nickname']} (ID:{account_id}) удален",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📋 Обновить таблицу", callback_data=f"admin_table_{page}")],
+                [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_back")]
+            ])
+        )
+    else:
+        print(f"❌ Ошибка при удалении аккаунта {account_id}")
+        await callback.message.edit_text(
+            "❌ Ошибка удаления",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_table_{page}")]
+            ])
+        )
+    
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("confirm_del_"))
+aasync def confirm_del(callback: CallbackQuery):
+    """Подтверждение удаления аккаунта админом"""
+    print("\n" + "="*50)
+    print("🗑️🗑️🗑️ confirm_del ВЫЗВАН! 🗑️🗑️🗑️")
+    print(f"   callback.data = '{callback.data}'")
+    print(f"   user_id = {callback.from_user.id}")
+    print("="*50)
+    
+    if not is_admin(callback.from_user.id):
+        print("❌ ДОСТУП ЗАПРЕЩЕН")
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        print(f"❌ Неверный формат: {parts}")
+        await callback.answer("❌ Неверный формат данных", show_alert=True)
+        return
+        
+    try:
+        account_id = int(parts[2])
+        page = int(parts[3])
+        print(f"📦 account_id = {account_id}, page = {page}")
+    except (ValueError, IndexError) as e:
+        print(f"❌ Ошибка парсинга: {e}")
+        await callback.answer("❌ Неверный ID или страница", show_alert=True)
+        return
+
+    account = db.get_account_by_id(account_id)
+    if not account:
+        print(f"❌ Аккаунт {account_id} не найден")
+        await callback.answer("❌ Аккаунт не найден", show_alert=True)
+        return
+    
+    print(f"📋 Аккаунт для удаления: {account.get('game_nickname')} (ID: {account_id})")
+
+    if db.delete_account(account_id):
+        print(f"✅ Аккаунт {account_id} успешно удален")
+        db.invalidate_cache()
+        
+        remaining = db.get_all_accounts()
+        print(f"📊 Осталось аккаунтов в БД: {len(remaining)}")
+        
         await callback.message.edit_text(
             f"✅ Аккаунт {account['game_nickname']} (ID:{account_id}) удален",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2647,16 +2702,25 @@ async def process_batch(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "admin_show_delete_menu")
 async def admin_show_delete_menu(callback: CallbackQuery):
+    """Показывает список аккаунтов для удаления"""
+    print("\n" + "="*50)
+    print("📋📋📋 admin_show_delete_menu ВЫЗВАН! 📋📋📋")
+    print(f"   callback.data = '{callback.data}'")
+    print(f"   user_id = {callback.from_user.id}")
+    print("="*50)
+    
     if not is_admin(callback.from_user.id):
+        print("❌ ДОСТУП ЗАПРЕЩЕН")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
     accounts = db.get_all_accounts()
-
     if not accounts:
+        print("📋 Нет аккаунтов для удаления")
         await callback.answer("📋 Нет аккаунтов для удаления", show_alert=True)
         return
 
+    # Получаем страницу (по умолчанию 1)
     try:
         page = int(callback.data.split("_")[4]) if len(callback.data.split("_")) > 4 else 1
     except:
@@ -2668,23 +2732,28 @@ async def admin_show_delete_menu(callback: CallbackQuery):
     start = (page - 1) * per_page
     end = min(start + per_page, len(accounts))
 
-    text = f"🗑️ <b>Выберите аккаунт для удаления:</b> (стр. {page}/{total_pages})\n\n"
+    print(f"📊 Всего аккаунтов: {len(accounts)}, страница {page}/{total_pages}")
 
+    text = f"🗑️ <b>Выберите аккаунт для удаления:</b> (стр. {page}/{total_pages})\n\n"
     buttons = []
 
+    # Кнопки с аккаунтами
     for i, acc in enumerate(accounts[start:end], start + 1):
         nick = acc.get('game_nickname', '—')
         if len(nick) > 30:
             nick = nick[:27] + '...'
         acc_id = acc.get('id')
         if acc_id:
+            callback_data = f"admin_del_{acc_id}_{page}"
+            print(f"➕ Кнопка: {i}. {nick} -> {callback_data}")
             buttons.append([
                 InlineKeyboardButton(
                     text=f"{i}. {nick}",
-                    callback_data=f"admin_del_{acc_id}_1"
+                    callback_data=callback_data
                 )
             ])
 
+    # Навигация
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_show_delete_menu_page_{page-1}"))
@@ -3069,6 +3138,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
