@@ -1519,7 +1519,7 @@ async def process_input(message: Message, state: FSMContext):
     
     print(f"\n📝 process_input: field={field}, text='{message.text}', temp='{temp}'")
     
-    # ===== ОБРАБОТКА УПРАВЛЯЮЩИХ КНОПОК =====
+    # ===== УПРАВЛЯЮЩИЕ КНОПКИ =====
     if message.text == "🚫 Отмена":
         await message.answer("❌ Действие отменено", reply_markup=get_main_kb(user_id))
         await state.clear()
@@ -1537,10 +1537,8 @@ async def process_input(message: Message, state: FSMContext):
         return
 
     # ===== ОБРАБОТКА ЦИФРОВЫХ КНОПОК =====
-    # Это для случая, когда нажимают НА КНОПКУ В БОТЕ, а не вводят с клавиатуры
-    if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","] and len(message.text) == 1:
+    if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
         if message.text == ",":
-            # Запятую можно только для дробных полей
             if field in ["bm", "pl1", "pl2", "pl3"]:
                 if "," not in temp:
                     temp += ","
@@ -1573,11 +1571,20 @@ async def process_input(message: Message, state: FSMContext):
             await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
             return
     else:
-        # ===== ВВОД С КЛАВИАТУРЫ (все остальные сообщения) =====
+        # ===== ВВОД С КЛАВИАТУРЫ =====
         value = message.text.strip()
         print(f"⌨️ Ввод с клавиатуры: '{value}'")
         
-    # Если значение пустое - ошибка
+        # 🔴 НОВАЯ ЛОГИКА: если ввели одну цифру и это не часть набора через кнопки
+        if len(value) == 1 and value.isdigit() and temp == "":
+            print(f"✅ Одна цифра с клавиатуры - сохраняем сразу: {value}")
+            # Просто сохраняем значение, без накопления
+            pass
+        elif temp != "":
+            # Если уже есть накопленное значение через кнопки - игнорируем ввод с клавиатуры
+            await message.answer(f"❌ Сначала завершите набор через ✅ Готово")
+            return
+        
     if not value:
         await message.answer("❌ Значение не может быть пустым")
         return
@@ -1640,7 +1647,6 @@ async def process_input(message: Message, state: FSMContext):
             
             success, error_msg, cleaned_value = validate_numeric_input(field, value)
             if not success:
-                # Показываем ошибку и возвращаем клавиатуру для повторного ввода
                 if field in ["bm", "pl1", "pl2", "pl3"]:
                     kb = get_numeric_kb(decimal=True)
                 else:
@@ -3052,6 +3058,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
