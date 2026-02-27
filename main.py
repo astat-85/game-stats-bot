@@ -2519,16 +2519,19 @@ async def confirm_del(callback: CallbackQuery):
     print("🗑️🗑️🗑️ confirm_del ВЫЗВАН! 🗑️🗑️🗑️")
     print(f"   callback.data = '{callback.data}'")
     print(f"   user_id = {callback.from_user.id}")
+    print(f"   is_admin = {is_admin(callback.from_user.id)}")
     print("="*50)
     
+    # 🔴 ПРОВЕРКА НА АДМИНА
     if not is_admin(callback.from_user.id):
-        print("❌ ДОСТУП ЗАПРЕЩЕН")
+        print("❌ ДОСТУП ЗАПРЕЩЕН - не админ")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
+    # Парсим данные из callback
     parts = callback.data.split("_")
     if len(parts) < 4:
-        print(f"❌ Неверный формат: {parts}")
+        print(f"❌ Неверный формат callback: {parts}")
         await callback.answer("❌ Неверный формат данных", show_alert=True)
         return
         
@@ -2536,27 +2539,30 @@ async def confirm_del(callback: CallbackQuery):
         account_id = int(parts[2])
         page = int(parts[3])
         print(f"📦 account_id = {account_id}, page = {page}")
-    except ValueError as e:
+    except (ValueError, IndexError) as e:
         print(f"❌ Ошибка парсинга: {e}")
         await callback.answer("❌ Неверный ID или страница", show_alert=True)
         return
 
+    # Получаем аккаунт из БД
     account = db.get_account_by_id(account_id)
     if not account:
         print(f"❌ Аккаунт {account_id} не найден")
         await callback.answer("❌ Аккаунт не найден", show_alert=True)
         return
     
-    print(f"📋 Аккаунт: {account.get('game_nickname')}")
+    print(f"📋 Аккаунт для удаления: {account.get('game_nickname')} (ID: {account_id})")
 
+    # Удаляем аккаунт
     if db.delete_account(account_id):
-        print(f"✅ Аккаунт {account_id} удален")
+        print(f"✅ Аккаунт {account_id} успешно удален")
         db.invalidate_cache()
         
-        # Проверяем остались ли еще аккаунты
+        # Проверяем остались ли аккаунты
         remaining = db.get_all_accounts()
-        print(f"📊 Осталось аккаунтов: {len(remaining)}")
+        print(f"📊 Осталось аккаунтов в БД: {len(remaining)}")
         
+        # Показываем сообщение об успешном удалении
         await callback.message.edit_text(
             f"✅ Аккаунт {account['game_nickname']} (ID:{account_id}) удален",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2565,13 +2571,14 @@ async def confirm_del(callback: CallbackQuery):
             ])
         )
     else:
-        print(f"❌ Ошибка удаления аккаунта {account_id}")
+        print(f"❌ Ошибка при удалении аккаунта {account_id}")
         await callback.message.edit_text(
             "❌ Ошибка удаления",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_table_{page}")]
             ])
         )
+    
     await callback.answer()
 
 @router.callback_query(F.data == "admin_batch")
@@ -3062,6 +3069,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
