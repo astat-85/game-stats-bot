@@ -2134,10 +2134,10 @@ async def db_restore_menu(callback: CallbackQuery):
 
 # ========== ВОССТАНОВЛЕНИЕ ИЗ БЭКАПА (СЕРВЕР) ==========
 @router.callback_query(F.data.startswith("db_restore_"))
-async def db_restore_handler(callback: CallbackQuery):
-    """Восстановление из выбранного бэкапа"""
+async def db_restore_unified_handler(callback: CallbackQuery, state: FSMContext):
+    """Единый обработчик для всех действий с бэкапами"""
     print("\n" + "="*50)
-    print("🟡🟡🟡 db_restore_handler ВЫЗВАН! 🟡🟡🟡")
+    print("🔵🔵🔵 db_restore_unified_handler ВЫЗВАН! 🔵🔵🔵")
     print(f"   callback.data = '{callback.data}'")
     print(f"   user_id = {callback.from_user.id}")
     print("="*50)
@@ -2147,46 +2147,160 @@ async def db_restore_handler(callback: CallbackQuery):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
     
-    # 🔴 ИЗМЕНЕНИЕ: сначала проверяем точное совпадение с "db_restore_pc"
+    # ===== ЗАГРУЗКА С ПК =====
     if callback.data == "db_restore_pc":
-        print("🔴🔴🔴 Это кнопка 'Загрузить с ПК' - передаем в другой обработчик! 🔴🔴🔴")
-        # Создаем новый callback с теми же данными, но aiogram сам вызовет нужный обработчик
-        # Просто выходим, чтобы сработал другой обработчик
-        return
-    
-    backup_name = callback.data.replace("db_restore_", "")
-    print(f"📦 backup_name = '{backup_name}'")
-    
-    # Проверяем, не является ли это пагинацией или другим действием
-    if backup_name in ["menu", "confirm"]:  # 🔴 убрали 'pc' из списка
-        print(f"⏭️ Игнорируем: {backup_name} не является бэкапом")
-        return
-    
-    backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
-    
-    if not backup_path.exists():
+        print("🔴🔴🔴 ЗАГРУЗКА С ПК 🔴🔴🔴")
+        await callback.answer()
+        
         await callback.message.edit_text(
-            "❌ Файл бэкапа не найден",
+            "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
+            "1️⃣ Нажмите на скрепку 📎\n"
+            "2️⃣ Выберите 'Документ'\n"
+            "3️⃣ Найдите файл .db на вашем компьютере\n"
+            "4️⃣ Отправьте его\n\n"
+            "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_restore_menu")]
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="db_management")]
+            ])
+        )
+        
+        await state.clear()
+        await state.set_state(EditState.waiting_for_backup)
+        await state.update_data(restore_mode="pc")
+        print("✅ Режим ожидания файла установлен")
+        return
+    
+    # ===== МЕНЮ ВЫБОРА БЭКАПА =====
+    if callback.data == "db_restore_menu":
+        print("📋 МЕНЮ ВЫБОРА БЭКАПА")
+        backups = sorted(BACKUP_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
+        root_backups = sorted(BASE_DIR.glob("backup_*.db"), key=os.path.getmtime, reverse=True)
+        all_backups = backups + root_backups
+        
+        if not all_backups:
+            await callback.message.edit_text(
+                "❌ Нет доступных бэкапов",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")]
+                ])
+            )
+            await callback.answer()
+            return
+        
+        buttons = []
+        for i, backup in enumerate(all_backups[:10]):
+            try:
+                mtime = backup.stat().st_mtime
+                date_str = datetime.fromtimestamp(mtime).strftime('%d.%m.%Y %H:%M')
+                location = "📁 backups" if backup.parent == BACKUP_DIR else "📁 корень"
+            except:
+                date_str = backup.name.replace('backup_', '').replace('.db', '')
+                location = ""
+            
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"📅 {date_str} ({(backup.stat().st_size / 1024):.1f} KB) {location}",
+                    callback_data=f"db_restore_file_{backup.name}"
+                )
+            ])
+        
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="db_management")])
+        
+        await callback.message.edit_text(
+            "📥 <b>Восстановление из бэкапа</b>\n\n"
+            "Выберите бэкап для восстановления:\n"
+            "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+        await callback.answer()
+        return
+    
+    # ===== ВЫБРАН КОНКРЕТНЫЙ ФАЙЛ =====
+    if callback.data.startswith("db_restore_file_"):
+        backup_name = callback.data.replace("db_restore_file_", "")
+        print(f"📦 ВЫБРАН ФАЙЛ: {backup_name}")
+        
+        backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
+        
+        if not backup_path.exists():
+            await callback.message.edit_text(
+                "❌ Файл бэкапа не найден",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_restore_menu")]
+                ])
+            )
+            await callback.answer()
+            return
+        
+        await callback.message.edit_text(
+            f"⚠️ <b>Подтверждение восстановления</b>\n\n"
+            f"Файл: {backup_name}\n"
+            f"Размер: {(backup_path.stat().st_size / 1024):.1f} KB\n\n"
+            f"<b>ВНИМАНИЕ!</b> Текущая база данных будет полностью заменена!\n\n"
+            f"Вы уверены?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ Да, восстановить", callback_data=f"db_restore_confirm_{backup_name}"),
+                    InlineKeyboardButton(text="❌ Нет, отмена", callback_data="db_restore_menu")
+                ]
             ])
         )
         await callback.answer()
         return
     
-    await callback.message.edit_text(
-        f"⚠️ <b>Подтверждение восстановления</b>\n\n"
-        f"Файл: {backup_name}\n"
-        f"Размер: {(backup_path.stat().st_size / 1024):.1f} KB\n\n"
-        f"<b>ВНИМАНИЕ!</b> Текущая база данных будет полностью заменена!\n\n"
-        f"Вы уверены?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Да, восстановить", callback_data=f"db_restore_confirm_{backup_name}"),
-                InlineKeyboardButton(text="❌ Нет, отмена", callback_data="db_restore_menu")
-            ]
-        ])
-    )
+    # ===== ПОДТВЕРЖДЕНИЕ ВОССТАНОВЛЕНИЯ =====
+    if callback.data.startswith("db_restore_confirm_"):
+        backup_name = callback.data.replace("db_restore_confirm_", "")
+        print(f"✅ ПОДТВЕРЖДЕНИЕ ВОССТАНОВЛЕНИЯ: {backup_name}")
+        
+        backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
+        await callback.message.edit_text("🔄 Восстановление...")
+        
+        try:
+            current_backup = f"before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            shutil.copy2(db.db_path, BACKUP_DIR / current_backup)
+            
+            db.close()
+            shutil.copy2(backup_path, db.db_path)
+            db._connect()
+            
+            if db.check_integrity():
+                accounts = db.get_all_accounts()
+                await callback.message.edit_text(
+                    f"✅ База данных успешно восстановлена из {backup_name}\n\n"
+                    f"📊 Загружено {len(accounts)} аккаунтов\n"
+                    f"💾 Предыдущая БД сохранена как: {current_backup}",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")]
+                    ])
+                )
+            else:
+                shutil.copy2(BACKUP_DIR / current_backup, db.db_path)
+                db._connect()
+                await callback.message.edit_text(
+                    "❌ Ошибка: восстановленный файл поврежден. База возвращена к предыдущему состоянию.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")]
+                    ])
+                )
+                
+        except Exception as e:
+            logger.error(f"Ошибка восстановления: {e}")
+            await callback.message.edit_text(
+                f"❌ Ошибка восстановления: {e}",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="db_restore_menu")]
+                ])
+            )
+            try:
+                db._connect()
+            except:
+                pass
+        
+        await callback.answer()
+        return
+    
+    print(f"⚠️ Неизвестный callback: {callback.data}")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("db_restore_confirm_"))
@@ -2887,6 +3001,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
