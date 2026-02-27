@@ -1547,6 +1547,19 @@ async def process_input(message: Message, state: FSMContext):
 @router.message(EditState.waiting_for_backup, F.document)
 async def handle_backup_file(message: Message, state: FSMContext):
     """Обработка загруженного файла бэкапа"""
+    print("\n" + "="*50)
+    print("📎📎📎 handle_backup_file ВЫЗВАН! 📎📎📎")
+    print(f"   user_id = {message.from_user.id}")
+    print(f"   is_admin = {is_admin(message.from_user.id)}")
+    print(f"   file_name = {message.document.file_name}")
+    print(f"   file_size = {message.document.file_size} bytes")
+    
+    # Проверяем состояние
+    current_state = await state.get_state()
+    current_data = await state.get_data()
+    print(f"📊 Текущее состояние FSM: {current_state}")
+    print(f"📊 Данные FSM: {current_data}")
+    
     if not is_admin(message.from_user.id):
         await state.clear()
         return
@@ -2123,13 +2136,23 @@ async def db_restore_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("db_restore_"))
 async def db_restore_handler(callback: CallbackQuery):
     """Восстановление из выбранного бэкапа"""
+    print("\n" + "="*50)
+    print("🟡🟡🟡 db_restore_handler ВЫЗВАН! 🟡🟡🟡")
+    print(f"   callback.data = '{callback.data}'")
+    print(f"   user_id = {callback.from_user.id}")
+    print("="*50)
+    
     if not is_admin(callback.from_user.id):
+        print("❌ ДОСТУП ЗАПРЕЩЕН")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
     
     backup_name = callback.data.replace("db_restore_", "")
+    print(f"📦 backup_name = '{backup_name}'")
+    
     # Проверяем, не является ли это пагинацией или другим действием
     if backup_name in ["menu", "pc", "confirm"]:
+        print(f"⏭️ Игнорируем: {backup_name} не является бэкапом")
         return
     
     backup_path = BACKUP_DIR / backup_name if (BACKUP_DIR / backup_name).exists() else BASE_DIR / backup_name
@@ -2219,29 +2242,54 @@ async def db_restore_confirm(callback: CallbackQuery):
 @router.callback_query(F.data == "db_restore_pc")
 async def db_restore_pc_callback(callback: CallbackQuery, state: FSMContext):
     """Обработка кнопки загрузки с ПК"""
+    print("\n" + "="*50)
+    print("🔴🔴🔴 db_restore_pc_callback ВЫЗВАН! 🔴🔴🔴")
+    print(f"   callback.data = '{callback.data}'")
+    print(f"   user_id = {callback.from_user.id}")
+    print(f"   is_admin = {is_admin(callback.from_user.id)}")
+    print(f"   message_id = {callback.message.message_id}")
+    print("="*50)
+    
     if not is_admin(callback.from_user.id):
+        print("❌ ДОСТУП ЗАПРЕЩЕН")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
     
+    print("✅ Доступ разрешен")
     await callback.answer()
     
-    # Не удаляем, а редактируем сообщение
-    await callback.message.edit_text(
-        "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
-        "1️⃣ Нажмите на скрепку 📎\n"
-        "2️⃣ Выберите 'Документ'\n"
-        "3️⃣ Найдите файл .db на вашем компьютере\n"
-        "4️⃣ Отправьте его\n\n"
-        "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="db_management")]
-        ])
-    )
+    print("📝 Редактирую сообщение...")
+    try:
+        await callback.message.edit_text(
+            "📤 <b>Загрузка бэкапа с компьютера</b>\n\n"
+            "1️⃣ Нажмите на скрепку 📎\n"
+            "2️⃣ Выберите 'Документ'\n"
+            "3️⃣ Найдите файл .db на вашем компьютере\n"
+            "4️⃣ Отправьте его\n\n"
+            "⚠️ <b>Внимание!</b> Текущая база будет заменена!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="db_management")]
+            ])
+        )
+        print("✅ Сообщение отредактировано")
+    except Exception as e:
+        print(f"❌ Ошибка при редактировании: {e}")
     
-    # Очищаем состояние перед установкой нового
+    print("🔄 Очищаю состояние FSM...")
     await state.clear()
+    
+    print("🔄 Устанавливаю состояние waiting_for_backup...")
     await state.set_state(EditState.waiting_for_backup)
     await state.update_data(restore_mode="pc")
+    
+    # Проверяем состояние после установки
+    current_state = await state.get_state()
+    current_data = await state.get_data()
+    print(f"📊 Текущее состояние: {current_state}")
+    print(f"📊 Данные состояния: {current_data}")
+    
+    print("✅ db_restore_pc_callback завершен")
+    print("="*50)
 
 # ========== АДМИН ХЕНДЛЕРЫ ==========
 @router.callback_query(F.data.startswith("admin_table_"))
@@ -2832,3 +2880,4 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
