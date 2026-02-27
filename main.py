@@ -2135,7 +2135,7 @@ async def db_restore_menu(callback: CallbackQuery):
 # ========== ВОССТАНОВЛЕНИЕ ИЗ БЭКАПА (СЕРВЕР) ==========
 @router.callback_query(F.data.startswith("db_restore_"))
 async def db_restore_handler(callback: CallbackQuery):
-   """Восстановление из выбранного бэкапа"""
+    """Восстановление из выбранного бэкапа"""
     print("\n" + "="*50)
     print("🟡🟡🟡 db_restore_handler ВЫЗВАН! 🟡🟡🟡")
     print(f"   callback.data = '{callback.data}'")
@@ -2887,5 +2887,6 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
