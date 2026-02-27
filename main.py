@@ -1536,56 +1536,59 @@ async def process_input(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # ===== ОБРАБОТКА ЦИФРОВЫХ КНОПОК =====
-    if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
-        # Это нажатие на кнопку в боте
-        if message.text == ",":
-            if field in ["bm", "pl1", "pl2", "pl3"]:
-                if "," not in temp:
-                    temp += ","
+    # 🔴 ВАЖНО: проверяем, откуда пришло сообщение
+    # Если есть reply_markup - значит это нажатие на кнопку в боте
+    if message.reply_markup is not None:
+        # ===== ОБРАБОТКА ЦИФРОВЫХ КНОПОК =====
+        if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
+            if message.text == ",":
+                if field in ["bm", "pl1", "pl2", "pl3"]:
+                    if "," not in temp:
+                        temp += ","
+                else:
+                    await message.answer(f"📝 Введите целое число без запятой")
+                    return
             else:
-                await message.answer(f"📝 Введите целое число без запятой")
+                temp += message.text
+                
+            await state.update_data(temp=temp)
+            await message.answer(f"📝 Текущее значение: {temp}")
+            return
+
+        if message.text == "⌫":
+            temp = temp[:-1] if temp else ""
+            await state.update_data(temp=temp)
+            if temp:
+                await message.answer(f"📝 Текущее значение: {temp}")
+            else:
+                await message.answer(f"📝 Значение очищено")
+            return
+
+        if message.text == "✅ Готово":
+            if temp:
+                value = temp
+                await state.update_data(temp="")
+            else:
+                await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
                 return
         else:
-            temp += message.text
-            
-        await state.update_data(temp=temp)
-        await message.answer(f"📝 Текущее значение: {temp}")
-        return
-
-    # ===== ОБРАБОТКА УДАЛЕНИЯ =====
-    if message.text == "⌫":
-        temp = temp[:-1] if temp else ""
-        await state.update_data(temp=temp)
-        if temp:
-            await message.answer(f"📝 Текущее значение: {temp}")
-        else:
-            await message.answer(f"📝 Значение очищено")
-        return
-
-    # ===== ОБРАБОТКА КНОПКИ ГОТОВО =====
-    if message.text == "✅ Готово":
-        if temp:
-            value = temp
-            await state.update_data(temp="")
-        else:
-            await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
+            # Если нажали какую-то другую кнопку
             return
     else:
-        # ===== ВВОД С КЛАВИАТУРЫ =====
+        # ===== ВВОД С КЛАВИАТУРЫ (нет reply_markup) =====
         value = message.text.strip()
         print(f"⌨️ Ввод с клавиатуры: '{value}'")
         
-        # ЕСЛИ ЭТО ОДНА ЦИФРА - СОХРАНЯЕМ СРАЗУ
-        if len(value) == 1 and value.isdigit():
-            print(f"✅ Одна цифра с клавиатуры - сохраняем сразу: {value}")
+        # Любое число с клавиатуры сохраняем сразу
+        if value.replace(',', '').replace('.', '').isdigit():
+            print(f"✅ Число с клавиатуры - сохраняем сразу: {value}")
             # Просто продолжаем выполнение
             pass
         elif temp:
             # Если есть накопленное значение через кнопки - игнорируем
             await message.answer(f"❌ Сначала завершите набор через ✅ Готово")
             return
-           
+        
     if not value:
         await message.answer("❌ Значение не может быть пустым")
         return
@@ -3059,6 +3062,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
