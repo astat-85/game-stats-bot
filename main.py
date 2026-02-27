@@ -1508,6 +1508,7 @@ async def step_finish(msg_or_cb, state: FSMContext, early=False):
 # ========== ОБРАБОТКА ВВОДА ==========
 @router.message(EditState.waiting_field_value)
 async def process_input(message: Message, state: FSMContext):
+    """Обработка ввода при обычном редактировании"""
     user_id = message.from_user.id
     username = message.from_user.username or f"user_{user_id}"
     data = await state.get_data()
@@ -1515,7 +1516,10 @@ async def process_input(message: Message, state: FSMContext):
     new = data.get("new", False)
     account_id = data.get("account_id")
     temp = data.get("temp", "")
-
+    
+    print(f"\n📝 process_input: field={field}, text={message.text}, temp={temp}")
+    
+    # ===== ОБРАБОТКА УПРАВЛЯЮЩИХ КНОПОК =====
     if message.text == "🚫 Отмена":
         await message.answer("❌ Действие отменено", reply_markup=get_main_kb(user_id))
         await state.clear()
@@ -1532,17 +1536,25 @@ async def process_input(message: Message, state: FSMContext):
         await state.clear()
         return
 
+    # ===== ОБРАБОТКА ЦИФРОВЫХ КНОПОК =====
     if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
         if message.text == ",":
+            # Запятую можно только для дробных полей
             if field in ["bm", "pl1", "pl2", "pl3"]:
                 if "," not in temp:
                     temp += ","
+            # Для бафов запятая не нужна, просто показываем что нажали
+            else:
+                await message.answer(f"📝 Введите целое число без запятой")
+                return
         else:
             temp += message.text
+            
         await state.update_data(temp=temp)
         await message.answer(f"📝 Текущее значение: {temp}")
         return
 
+    # ===== ОБРАБОТКА УДАЛЕНИЯ =====
     if message.text == "⌫":
         temp = temp[:-1] if temp else ""
         await state.update_data(temp=temp)
@@ -1552,6 +1564,7 @@ async def process_input(message: Message, state: FSMContext):
             await message.answer(f"📝 Значение очищено")
         return
 
+    # ===== ОБРАБОТКА КНОПКИ ГОТОВО =====
     if message.text == "✅ Готово":
         if temp:
             value = temp
@@ -1560,10 +1573,19 @@ async def process_input(message: Message, state: FSMContext):
             await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
             return
     else:
+        # ===== ВВОД С КЛАВИАТУРЫ =====
         value = message.text.strip()
+        # Сразу очищаем temp, так как значение уже получено
+        await state.update_data(temp="")
+        
+    # Если значение пустое - ошибка
+    if not value:
+        await message.answer("❌ Значение не может быть пустым")
+        return
 
     field_name = FIELD_FULL_NAMES.get(field, field)
 
+    # ===== ОБРАБОТКА НИКА =====
     if field == "nick":
         if not value:
             await message.answer("❌ Ник не может быть пустым", reply_markup=get_cancel_kb())
@@ -1612,12 +1634,14 @@ async def process_input(message: Message, state: FSMContext):
                 await state.clear()
             return
 
+    # ===== ОБРАБОТКА ЧИСЛОВЫХ ПОЛЕЙ =====
     if field in ["power", "bm", "dragon", "stands", "research", "pl1", "pl2", "pl3"]:
         if value:
             value = value.replace('.', ',')
             
             success, error_msg, cleaned_value = validate_numeric_input(field, value)
             if not success:
+                # Показываем ошибку и возвращаем клавиатуру для повторного ввода
                 if field in ["bm", "pl1", "pl2", "pl3"]:
                     kb = get_numeric_kb(decimal=True)
                 else:
@@ -1626,7 +1650,9 @@ async def process_input(message: Message, state: FSMContext):
                 return
             
             value = cleaned_value
+            print(f"✅ Валидация пройдена: {field} = {value}")
 
+    # ===== СОХРАНЕНИЕ =====
     if account_id:
         account = db.get_account_by_id(account_id)
         if account:
@@ -1636,6 +1662,7 @@ async def process_input(message: Message, state: FSMContext):
                 f"✅ {field_name}: {display}",
                 reply_markup=get_main_kb(user_id)
             )
+            print(f"✅ Значение сохранено для аккаунта {account_id}")
 
     await state.clear()
 
@@ -3026,4 +3053,5 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
