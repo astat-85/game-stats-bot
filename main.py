@@ -730,6 +730,146 @@ class Database:
             logger.error(f"❌ Ошибка экспорта: {e}")
             return None
 
+    def export_to_excel(self, filename: str = None) -> Optional[str]:
+        """Экспорт в Excel с автоматической шириной столбцов + отступы"""
+        if not self.conn:
+            self._connect()
+        
+        # Проверяем наличие openpyxl
+        try:
+            import openpyxl
+            from openpyxl.utils import get_column_letter
+            from openpyxl.styles import Font, PatternFill, Alignment
+        except ImportError:
+            logger.error("❌ openpyxl не установлен. Установите: pip install openpyxl")
+            return None
+            
+        try:
+            if not filename:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = f"export_{timestamp}.xlsx"
+
+            filepath = EXPORT_DIR / filename
+            accounts = self.get_all_accounts()
+
+            if not accounts:
+                return None
+
+            # Подсчет аккаунтов для групп
+            accounts_count = {}
+            for acc in accounts:
+                user_id = acc.get('user_id')
+                if user_id:
+                    accounts_count[user_id] = accounts_count.get(user_id, 0) + 1
+
+            # Номера групп для мультиаккаунтов
+            group_number = 1
+            user_group = {}
+            for user_id, count in accounts_count.items():
+                if count > 1:
+                    user_group[user_id] = group_number
+                    group_number += 1
+
+            # Создаем Excel файл
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Игроки"
+
+            # Заголовки
+            headers = [
+                "№", "Группа", "Ник в игре", "Эл", "БМ", "Пл 1", "Пл 2", "Пл 3",
+                "Др", "БС", "БИ", "ID имя", "ID номер", "Время", "Дата"
+            ]
+            
+            # Стиль для заголовков
+            header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            header_font_white = Font(bold=True, color="FFFFFF")
+            
+            for col, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col, value=header)
+                cell.font = header_font_white
+                cell.fill = header_fill
+                cell.alignment = Alignment(horizontal='center')
+
+            # Данные
+            for i, acc in enumerate(accounts, 1):
+                updated = acc.get('updated_at', '')
+                time_str = '--:--:--'
+                date_str = '--.--.----'
+
+                if updated:
+                    try:
+                        dt = datetime.strptime(updated, '%Y-%m-%d %H:%M:%S')
+                        time_str = dt.strftime('%H:%M:%S')
+                        date_str = dt.strftime('%d.%m.%Y')
+                    except:
+                        pass
+
+                bm = acc.get('bm', '')
+                if bm and bm != '—' and ',' not in bm:
+                    bm = f"{bm},0"
+
+                pl1 = acc.get('pl1', '')
+                if pl1 and pl1 != '—' and ',' not in pl1:
+                    pl1 = f"{pl1},0"
+
+                pl2 = acc.get('pl2', '')
+                if pl2 and pl2 != '—' and ',' not in pl2:
+                    pl2 = f"{pl2},0"
+
+                pl3 = acc.get('pl3', '')
+                if pl3 and pl3 != '—' and ',' not in pl3:
+                    pl3 = f"{pl3},0"
+
+                user_id = acc.get('user_id')
+                group = user_group.get(user_id, '')
+
+                row_data = [
+                    i,
+                    group,
+                    acc.get('game_nickname', ''),
+                    acc.get('power', ''),
+                    bm,
+                    pl1,
+                    pl2,
+                    pl3,
+                    acc.get('dragon', ''),
+                    acc.get('buffs_stands', ''),
+                    acc.get('buffs_research', ''),
+                    f"@{acc.get('username', '')}" if acc.get('username') else '',
+                    acc.get('user_id', ''),
+                    time_str,
+                    date_str
+                ]
+                
+                for col, value in enumerate(row_data, 1):
+                    cell = ws.cell(row=i+1, column=col, value=value)
+                    if col in [1, 2]:
+                        cell.alignment = Alignment(horizontal='center')
+                    else:
+                        cell.alignment = Alignment(horizontal='left')
+
+            # 🔴 АВТОМАТИЧЕСКАЯ ШИРИНА СТОЛБЦОВ С ОТСТУПАМИ
+            for col in range(1, len(headers) + 1):
+                column_letter = get_column_letter(col)
+                max_length = 0
+                for row in range(1, len(accounts) + 2):
+                    cell_value = ws.cell(row=row, column=col).value
+                    if cell_value:
+                        max_length = max(max_length, len(str(cell_value)))
+                
+                width = max(max_length + 3, 8)
+                ws.column_dimensions[column_letter].width = width
+
+            wb.save(filepath)
+            logger.info(f"✅ Экспорт Excel: {filepath}")
+            return str(filepath)
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка экспорта в Excel: {e}")
+            traceback.print_exc()
+            return None
+            
     def restore_from_backup(self, backup_path: Path) -> bool:
         try:
             if not backup_path.exists() or backup_path.stat().st_size == 0:
@@ -900,6 +1040,7 @@ def get_admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Таблица", callback_data="admin_table_1")],
         [InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="admin_export")],
+        [InlineKeyboardButton(text="📊 Экспорт Excel", callback_data="admin_export_excel")],
         [InlineKeyboardButton(text="🗄️ Управление БД", callback_data="db_management")],
         [InlineKeyboardButton(text="🔍 Поиск", callback_data="admin_search")],
         [InlineKeyboardButton(text="🗑️ Пакетное удаление", callback_data="admin_batch")],
@@ -2822,6 +2963,37 @@ async def admin_export(callback: CallbackQuery):
 
     await callback.answer()
 
+@router.callback_query(F.data == "admin_export_excel")
+async def admin_export_excel(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+
+    await callback.message.edit_text("🔄 Создание Excel файла...")
+
+    path = await asyncio.to_thread(db.export_to_excel)
+
+    if path and Path(path).exists():
+        try:
+            await bot.send_document(
+                chat_id=callback.from_user.id,
+                document=FSInputFile(path),
+                caption=f"📊 Excel экспорт {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+            )
+            stats = db.get_stats()
+            text = f"""👑 <b>Админ-панель</b>
+
+👥 Пользователей: {stats['unique_users']}
+🎮 Аккаунтов: {stats['total_accounts']}"""
+            await callback.message.edit_text(text, reply_markup=get_admin_kb())
+        except Exception as e:
+            logger.error(f"Ошибка отправки Excel: {e}")
+            await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=get_admin_kb())
+    else:
+        await callback.message.edit_text("❌ Ошибка создания файла", reply_markup=get_admin_kb())
+
+    await callback.answer()
+    
 @router.callback_query(F.data == "admin_search")
 async def admin_search(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
@@ -3267,6 +3439,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
