@@ -1517,7 +1517,7 @@ async def process_input(message: Message, state: FSMContext):
     account_id = data.get("account_id")
     temp = data.get("temp", "")
     
-    print(f"\n📝 process_input: field={field}, text={message.text}, temp={temp}")
+    print(f"\n📝 process_input: field={field}, text='{message.text}', temp='{temp}'")
     
     # ===== ОБРАБОТКА УПРАВЛЯЮЩИХ КНОПОК =====
     if message.text == "🚫 Отмена":
@@ -1537,13 +1537,13 @@ async def process_input(message: Message, state: FSMContext):
         return
 
     # ===== ОБРАБОТКА ЦИФРОВЫХ КНОПОК =====
-    if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
+    # Это для случая, когда нажимают НА КНОПКУ В БОТЕ, а не вводят с клавиатуры
+    if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","] and len(message.text) == 1:
         if message.text == ",":
             # Запятую можно только для дробных полей
             if field in ["bm", "pl1", "pl2", "pl3"]:
                 if "," not in temp:
                     temp += ","
-            # Для бафов запятая не нужна, просто показываем что нажали
             else:
                 await message.answer(f"📝 Введите целое число без запятой")
                 return
@@ -1573,10 +1573,9 @@ async def process_input(message: Message, state: FSMContext):
             await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
             return
     else:
-        # ===== ВВОД С КЛАВИАТУРЫ =====
+        # ===== ВВОД С КЛАВИАТУРЫ (все остальные сообщения) =====
         value = message.text.strip()
-        # Сразу очищаем temp, так как значение уже получено
-        await state.update_data(temp="")
+        print(f"⌨️ Ввод с клавиатуры: '{value}'")
         
     # Если значение пустое - ошибка
     if not value:
@@ -3053,5 +3052,6 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
