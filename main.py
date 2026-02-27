@@ -1221,9 +1221,10 @@ async def step_input(message: Message, state: FSMContext):
     account_id = data.get("step_account")
     step_data = data.get("step_data", {})
     step_temp = data.get("step_temp", "")
-
+    
     field_name = FIELD_FULL_NAMES.get(field, field)
 
+    # ===== ОБРАБОТКА УПРАВЛЯЮЩИХ КНОПОК =====
     if message.text == "🚫 Отмена":
         await message.answer("❌ Действие отменено", reply_markup=get_main_kb(message.from_user.id))
         await state.clear()
@@ -1237,22 +1238,6 @@ async def step_input(message: Message, state: FSMContext):
         await message.answer(f"⏭ Поле «{field_name}» пропущено")
         await state.update_data(step_index=data.get("step_index", 0) + 1, step_temp="")
         await step_next(message, state)
-        return
-
-    # Обработка нажатия на цифровые кнопки
-    if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
-        if message.text == ",":
-            if field in ["bm", "pl1", "pl2", "pl3"]:
-                if "," not in step_temp:
-                    step_temp += ","
-        else:
-            step_temp += message.text
-        await state.update_data(step_temp=step_temp)
-        
-        # Показываем текущее значение
-        await message.answer(f"📝 Текущее значение: {step_temp}")
-        
-        # НЕ создаем задачу для отложенного показа, сразу показываем
         return
 
     if message.text == "⌫":
@@ -1272,22 +1257,33 @@ async def step_input(message: Message, state: FSMContext):
             await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
             return
     else:
-        # Если это не специальная кнопка, значит пользователь ввел текст с клавиатуры
+        # ===== ЗДЕСЬ ГЛАВНОЕ ИЗМЕНЕНИЕ =====
+        # Если пользователь ввел число с обычной клавиатуры (не нажимал кнопки меню)
+        # ИЛИ нажал цифровую кнопку на клавиатуре бота
         value = message.text.strip()
-        # Сразу переходим к обработке значения, без ожидания "✅ Готово"
-        await state.update_data(step_temp="")  # Очищаем временное значение
+        
+        # Проверяем, является ли ввод числом (для цифровых полей)
+        if field in ["power", "bm", "dragon", "stands", "research", "pl1", "pl2", "pl3"]:
+            # Если это цифровая кнопка из меню, то message.text будет "5", "6" и т.д.
+            # Если это ввод с клавиатуры, тоже текст
+            # В любом случае, обрабатываем как значение
+            pass
+        else:
+            # Для нечисловых полей просто берем текст
+            pass
+        
+        await state.update_data(step_temp="")
 
+    # ===== ВАЛИДАЦИЯ =====
     if not value:
         await message.answer("❌ Значение не может быть пустым. Введите число или нажмите «⏭ Пропустить»")
         return
 
-    # Валидация числовых полей
     if field in ["power", "bm", "dragon", "stands", "research", "pl1", "pl2", "pl3"]:
         value = value.replace('.', ',')
         
         success, error_msg, cleaned_value = validate_numeric_input(field, value)
         if not success:
-            # Определяем тип клавиатуры для повторного ввода
             if field in ["bm", "pl1", "pl2", "pl3"]:
                 kb = get_numeric_kb(decimal=True)
             else:
@@ -1297,13 +1293,15 @@ async def step_input(message: Message, state: FSMContext):
         
         value = cleaned_value
 
+    # ===== СОХРАНЯЕМ И ПЕРЕХОДИМ =====
     step_data[field] = value
     await message.answer(f"✅ {field_name}: {value}")
 
     # Переходим к следующему шагу
+    new_index = data.get("step_index", 0) + 1
     await state.update_data(
         step_data=step_data,
-        step_index=data.get("step_index", 0) + 1,
+        step_index=new_index,
         step_temp=""
     )
     await step_next(message, state)
@@ -2708,5 +2706,6 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
