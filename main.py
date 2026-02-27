@@ -1537,7 +1537,7 @@ async def process_input(message: Message, state: FSMContext):
         return
 
     # ===== ОБРАБОТКА ЦИФРОВЫХ КНОПОК =====
-     if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
+    if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
         # Это нажатие на кнопку в боте
         if message.text == ",":
             if field in ["bm", "pl1", "pl2", "pl3"]:
@@ -1576,39 +1576,16 @@ async def process_input(message: Message, state: FSMContext):
         value = message.text.strip()
         print(f"⌨️ Ввод с клавиатуры: '{value}'")
         
-        # 🔴 ЕСЛИ ЭТО ОДНА ЦИФРА - СОХРАНЯЕМ СРАЗУ
+        # ЕСЛИ ЭТО ОДНА ЦИФРА - СОХРАНЯЕМ СРАЗУ
         if len(value) == 1 and value.isdigit():
             print(f"✅ Одна цифра с клавиатуры - сохраняем сразу: {value}")
-            # Просто продолжаем выполнение - значение пойдет в валидацию и сохранение
+            # Просто продолжаем выполнение
             pass
         elif temp:
-            # Если есть накопленное значение через кнопки - игнорируем ввод с клавиатуры
+            # Если есть накопленное значение через кнопки - игнорируем
             await message.answer(f"❌ Сначала завершите набор через ✅ Готово")
             return
-
-    # ===== ОБРАБОТКА КНОПКИ ГОТОВО =====
-    if message.text == "✅ Готово":
-        if temp:
-            value = temp
-            await state.update_data(temp="")
-        else:
-            await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
-            return
-    else:
-        # ===== ВВОД С КЛАВИАТУРЫ =====
-        value = message.text.strip()
-        print(f"⌨️ Ввод с клавиатуры: '{value}'")
-        
-        # 🔴 НОВАЯ ЛОГИКА: если ввели одну цифру и это не часть набора через кнопки
-        if len(value) == 1 and value.isdigit() and temp == "":
-            print(f"✅ Одна цифра с клавиатуры - сохраняем сразу: {value}")
-            # Просто сохраняем значение, без накопления
-            pass
-        elif temp != "":
-            # Если уже есть накопленное значение через кнопки - игнорируем ввод с клавиатуры
-            await message.answer(f"❌ Сначала завершите набор через ✅ Готово")
-            return
-        
+           
     if not value:
         await message.answer("❌ Значение не может быть пустым")
         return
@@ -3082,6 +3059,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
