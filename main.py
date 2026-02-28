@@ -1624,26 +1624,75 @@ async def step_input(message: Message, state: FSMContext):
         await step_next(message, state)
         return
 
-    if message.text == "⌫":
-        step_temp = step_temp[:-1] if step_temp else ""
-        await state.update_data(step_temp=step_temp)
-        if step_temp:
+    # 🔴 НОВАЯ ЛОГИКА: определяем, использует ли пользователь кнопки
+    # Если есть временное значение (step_temp) - значит пользователь уже начал набор через кнопки
+    if step_temp is not None and step_temp != "":
+        # ===== РЕЖИМ НАБОРА ЧЕРЕЗ КНОПКИ =====
+        if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
+            if message.text == ",":
+                if field in ["bm", "pl1", "pl2", "pl3"]:
+                    if "," not in step_temp:
+                        step_temp += ","
+                else:
+                    await message.answer(f"📝 Введите целое число без запятой")
+                    return
+            else:
+                step_temp += message.text
+                
+            await state.update_data(step_temp=step_temp)
             await message.answer(f"📝 Текущее значение: {step_temp}")
-        else:
-            await message.answer(f"📝 Значение очищено")
-        return
+            return
 
-    if message.text == "✅ Готово":
-        if step_temp:
-            value = step_temp
-            await state.update_data(step_temp="")
+        if message.text == "⌫":
+            step_temp = step_temp[:-1] if step_temp else ""
+            await state.update_data(step_temp=step_temp)
+            if step_temp:
+                await message.answer(f"📝 Текущее значение: {step_temp}")
+            else:
+                await message.answer(f"📝 Значение очищено")
+            return
+
+        if message.text == "✅ Готово":
+            if step_temp:
+                value = step_temp
+                await state.update_data(step_temp="")
+            else:
+                await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
+                return
         else:
-            await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
+            # Если пользователь вводит что-то другое во время набора с кнопок
+            await message.answer(f"❌ Используйте кнопки для ввода или нажмите ✅ Готово")
             return
     else:
-        # Любой другой ввод (цифровые кнопки или клавиатура) считаем значением
+        # ===== ПЕРВОЕ НАЖАТИЕ ИЛИ ВВОД С КЛАВИАТУРЫ =====
         value = message.text.strip()
-        await state.update_data(step_temp="")
+        
+        # Если это цифра или запятая - начинаем набор через кнопки
+        if value in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
+            if value == ",":
+                if field in ["bm", "pl1", "pl2", "pl3"]:
+                    step_temp = ","
+                else:
+                    await message.answer(f"📝 Введите целое число без запятой")
+                    return
+            else:
+                step_temp = value
+                
+            await state.update_data(step_temp=step_temp)
+            await message.answer(f"📝 Текущее значение: {step_temp}")
+            return
+        else:
+            # Это ввод с клавиатуры (текст или многозначное число)
+            print(f"⌨️ Ввод с клавиатуры: '{value}'")
+            # Любое число с клавиатуры сохраняем сразу
+            if value.replace(',', '').replace('.', '').isdigit():
+                print(f"✅ Число с клавиатуры - сохраняем сразу: {value}")
+                # Просто продолжаем выполнение
+                pass
+            elif step_temp:
+                # Если есть накопленное значение через кнопки - игнорируем
+                await message.answer(f"❌ Сначала завершите набор через ✅ Готово")
+                return
 
     if not value:
         await message.answer("❌ Значение не может быть пустым. Введите число или нажмите «⏭ Пропустить»")
@@ -3544,4 +3593,5 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
