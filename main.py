@@ -1764,10 +1764,10 @@ async def process_input(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # 🔴 ВАЖНО: проверяем, откуда пришло сообщение
-    # Если есть reply_markup - значит это нажатие на кнопку в боте
-    if message.reply_markup is not None:
-        # ===== ОБРАБОТКА ЦИФРОВЫХ КНОПОК =====
+    # 🔴 НОВАЯ ЛОГИКА: определяем, использует ли пользователь кнопки
+    # Если есть временное значение (temp) - значит пользователь уже начал набор через кнопки
+    if temp is not None and temp != "":
+        # ===== РЕЖИМ НАБОРА ЧЕРЕЗ КНОПКИ =====
         if message.text in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
             if message.text == ",":
                 if field in ["bm", "pl1", "pl2", "pl3"]:
@@ -1800,22 +1800,40 @@ async def process_input(message: Message, state: FSMContext):
                 await message.answer("❌ Нет введенного значения. Используйте кнопки с цифрами.")
                 return
         else:
-            # Если нажали какую-то другую кнопку
+            # Если пользователь вводит что-то другое во время набора с кнопок
+            await message.answer(f"❌ Используйте кнопки для ввода или нажмите ✅ Готово")
             return
     else:
-        # ===== ВВОД С КЛАВИАТУРЫ (нет reply_markup) =====
+        # ===== ПЕРВОЕ НАЖАТИЕ ИЛИ ВВОД С КЛАВИАТУРЫ =====
+        # Проверяем, является ли ввод числом или текстом
         value = message.text.strip()
-        print(f"⌨️ Ввод с клавиатуры: '{value}'")
         
-        # Любое число с клавиатуры сохраняем сразу
-        if value.replace(',', '').replace('.', '').isdigit():
-            print(f"✅ Число с клавиатуры - сохраняем сразу: {value}")
-            # Просто продолжаем выполнение
-            pass
-        elif temp:
-            # Если есть накопленное значение через кнопки - игнорируем
-            await message.answer(f"❌ Сначала завершите набор через ✅ Готово")
+        # Если это цифра или запятая - начинаем набор через кнопки
+        if value in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ","]:
+            if value == ",":
+                if field in ["bm", "pl1", "pl2", "pl3"]:
+                    temp = ","
+                else:
+                    await message.answer(f"📝 Введите целое число без запятой")
+                    return
+            else:
+                temp = value
+                
+            await state.update_data(temp=temp)
+            await message.answer(f"📝 Текущее значение: {temp}")
             return
+        else:
+            # Это ввод с клавиатуры (текст или многозначное число)
+            print(f"⌨️ Ввод с клавиатуры: '{value}'")
+            # Любое число с клавиатуры сохраняем сразу
+            if value.replace(',', '').replace('.', '').isdigit():
+                print(f"✅ Число с клавиатуры - сохраняем сразу: {value}")
+                # Просто продолжаем выполнение
+                pass
+            elif temp:
+                # Если есть накопленное значение через кнопки - игнорируем
+                await message.answer(f"❌ Сначала завершите набор через ✅ Готово")
+                return
         
     if not value:
         await message.answer("❌ Значение не может быть пустым")
@@ -3526,3 +3544,4 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
