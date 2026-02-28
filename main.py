@@ -957,7 +957,8 @@ class Database:
         logger.error(f"❌ Ошибка экспорта в Excel: {e}")
         traceback.print_exc()
         return None
-            
+
+               
     def restore_from_backup(self, backup_path: Path) -> bool:
         try:
             if not backup_path.exists() or backup_path.stat().st_size == 0:
@@ -3594,6 +3595,7 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
 
 
