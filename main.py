@@ -2088,6 +2088,21 @@ async def handle_backup_file(message: Message, state: FSMContext):
 
 # ========== ОБЩИЙ ХЕНДЛЕР ==========
 @router.message(F.chat.type == "private")
+async def debug_all_messages(message: Message, state: FSMContext):
+    """Отладка всех сообщений - ВРЕМЕННО"""
+    current_state = await state.get_state()
+    print(f"\n📨📨📨 ВСЕ СООБЩЕНИЯ 📨📨📨")
+    print(f"   Текст: '{message.text}'")
+    print(f"   User ID: {message.from_user.id}")
+    print(f"   Текущее состояние FSM: {current_state}")
+    
+    # Если есть активное состояние, но это не поиск - пропускаем
+    if current_state and current_state != EditState.waiting_search_query:
+        print(f"⚠️ Активное состояние: {current_state}")
+    
+    # Не мешаем работе других обработчиков - пропускаем сообщение дальше
+    # Этот обработчик только логирует
+
 async def any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is not None:
@@ -3493,30 +3508,47 @@ async def admin_export_excel(callback: CallbackQuery):
     
 @router.callback_query(F.data == "admin_search")
 async def admin_search(callback: CallbackQuery, state: FSMContext):
+    """Запуск поиска"""
+    print("\n" + "="*50)
+    print("🔍🔍🔍 admin_search ВЫЗВАН! 🔍🔍🔍")
+    print(f"   user_id = {callback.from_user.id}")
+    print(f"   is_admin = {is_admin(callback.from_user.id)}")
+    
     if not is_admin(callback.from_user.id):
+        print("❌ ДОСТУП ЗАПРЕЩЕН")
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
     # Очищаем предыдущее состояние
     await state.clear()
+    print("✅ Состояние очищено")
     
+    # Устанавливаем новое состояние
+    await state.set_state(EditState.waiting_search_query)
+    current_state = await state.get_state()
+    print(f"✅ Установлено состояние: {current_state}")
+    
+    # Отправляем сообщение с просьбой ввести ник
     await callback.message.edit_text(
         "🔍 <b>Поиск</b>\n\nВведите ник или ID для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back")]
         ])
     )
-    await state.set_state(EditState.waiting_search_query)
     await callback.answer()
+    print("✅ Сообщение отправлено")
+    print("="*50)
 
 @router.message(EditState.waiting_search_query)
 async def process_search(message: Message, state: FSMContext):
     """Обработка поискового запроса"""
-    print("\n" + "="*50)
-    print("🔍🔍🔍 process_search ВЫЗВАН! 🔍🔍🔍")
+    print("\n" + "!"*50)
+    print("🔴🔴🔴 process_search ВЫЗВАН! 🔴🔴🔴")
     print(f"   Текст: '{message.text}'")
     print(f"   User ID: {message.from_user.id}")
     print(f"   Is admin: {is_admin(message.from_user.id)}")
+    print(f"   Chat ID: {message.chat.id}")
+    print(f"   Message ID: {message.message_id}")
     
     # Проверяем текущее состояние
     current_state = await state.get_state()
@@ -3529,8 +3561,8 @@ async def process_search(message: Message, state: FSMContext):
 
     if current_state != EditState.waiting_search_query:
         print(f"❌ Неверное состояние: {current_state}")
-        await state.clear()
-        return
+        # Если состояние не то, пробуем всё равно обработать
+        print("⚠️ Пробуем обработать несмотря на состояние...")
 
     query = message.text.strip()
     print(f"📝 Поисковый запрос: '{query}'")
@@ -3597,7 +3629,7 @@ async def process_search(message: Message, state: FSMContext):
     # Очищаем состояние
     await state.clear()
     print("✅ Состояние очищено")
-    print("="*50)
+    print("!"*50)
 
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
@@ -3977,3 +4009,4 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
