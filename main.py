@@ -1036,6 +1036,7 @@ class EditState(StatesGroup):
     waiting_search_query = State()
     waiting_batch_delete = State()
     waiting_for_backup = State()
+    batch_selection = State()  # 🔴 НОВОЕ состояние для пакетного удаления с чекбоксами
 
 # ========== КЛАВИАТУРЫ ==========
 def is_admin(user_id: int) -> bool:
@@ -1346,6 +1347,34 @@ async def safe_send(obj, text: str, **kwargs):
                         await obj.message.answer(part, **kwargs)
     except Exception as e:
         logger.error(f"Safe send error: {e}")
+
+# ========== ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ ==========
+async def check_subscription(user_id: int) -> bool:
+    """
+    Проверяет, подписан ли пользователь на целевую группу
+    Возвращает True если подписан, False если нет
+    """
+    if not TARGET_CHAT_ID:
+        # Если группа не настроена - разрешаем доступ
+        print("⚠️ TARGET_CHAT_ID не настроен, проверка подписки отключена")
+        return True
+        
+    try:
+        # Получаем информацию о пользователе в чате
+        member = await bot.get_chat_member(chat_id=TARGET_CHAT_ID, user_id=user_id)
+        
+        # Статусы, которые считаются "подпиской"
+        if member.status in ['creator', 'administrator', 'member']:
+            print(f"✅ Пользователь {user_id} подписан на группу")
+            return True
+        else:
+            print(f"❌ Пользователь {user_id} НЕ подписан на группу")
+            return False
+            
+    except Exception as e:
+        print(f"⚠️ Ошибка проверки подписки: {e}")
+        # В случае ошибки лучше запретить доступ
+        return False
 
 # ========== КОМАНДЫ ==========
 @router.message(Command("start"))
@@ -2119,6 +2148,45 @@ async def my_accounts_cb(callback: CallbackQuery):
 
 @router.callback_query(F.data == "new_account")
 async def new_account(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    
+    # Проверяем подписку на группу
+    is_subscribed = await check_subscription(user_id)
+    
+    if not is_subscribed:
+        # Формируем информацию о группе
+        group_info = "целевую группу"
+        invite_link = None
+        if TARGET_CHAT_ID:
+            try:
+                chat = await bot.get_chat(TARGET_CHAT_ID)
+                group_info = f"группу <b>{chat.title}</b>"
+                invite_link = chat.invite_link
+            except:
+                pass
+        
+        text = f"❌ <b>Доступ запрещен</b>\n\n"
+        text += f"Для создания аккаунта необходимо быть подписчиком {group_info}.\n\n"
+        
+        if invite_link:
+            text += f"👉 Вступите в группу: {invite_link}\n\n"
+        else:
+            text += f"1️⃣ Вступите в группу\n"
+            text += f"2️⃣ После вступления нажмите кнопку ниже\n\n"
+        
+        text += f"<i>Если вы уже вступили, попробуйте через минуту</i>"
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Проверить подписку", callback_data="check_subscription_before_create")],
+                [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")]
+            ])
+        )
+        await callback.answer()
+        return
+    
+    # Если подписка есть - продолжаем создание
     await callback.message.edit_text(
         "➕ <b>Создание аккаунта</b>\n\nВведите игровой ник:"
     )
@@ -2130,9 +2198,54 @@ async def new_account(callback: CallbackQuery, state: FSMContext):
     await state.update_data(
         field="nick",
         new=True,
-        first=len(db.get_user_accounts(callback.from_user.id)) == 0,
+        first=len(db.get_user_accounts(user_id)) == 0,
         temp=""
     )
+    await callback.answer()
+
+@router.callback_query(F.data == "check_subscription_before_create")
+async def check_subscription_before_create(callback: CallbackQuery, state: FSMContext):
+    """Проверка подписки перед созданием аккаунта"""
+    user_id = callback.from_user.id
+    
+    is_subscribed = await check_subscription(user_id)
+    
+    if is_subscribed:
+        # Если подписался - переходим к созданию
+        await callback.message.edit_text(
+            "✅ <b>Подписка подтверждена!</b>\n\n"
+            "➕ Введите игровой ник:"
+        )
+        await callback.message.answer(
+            f"📝 Введите ник ({MIN_NICK_LENGTH}-{MAX_NICK_LENGTH} символов):",
+            reply_markup=get_cancel_kb()
+        )
+        await state.set_state(EditState.waiting_field_value)
+        await state.update_data(
+            field="nick",
+            new=True,
+            first=len(db.get_user_accounts(user_id)) == 0,
+            temp=""
+        )
+    else:
+        # Если всё ещё не подписан
+        group_info = "целевую группу"
+        if TARGET_CHAT_ID:
+            try:
+                chat = await bot.get_chat(TARGET_CHAT_ID)
+                group_info = f"группу <b>{chat.title}</b>"
+            except:
+                pass
+        
+        await callback.message.edit_text(
+            f"❌ <b>Подписка не найдена</b>\n\n"
+            f"Убедитесь, что вы вступили в {group_info}, и попробуйте снова.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data="check_subscription_before_create")],
+                [InlineKeyboardButton(text="🏠 Меню", callback_data="menu")]
+            ])
+        )
+    
     await callback.answer()
 
 @router.callback_query(F.data.startswith("select_"))
@@ -2796,7 +2909,7 @@ async def admin_table(callback: CallbackQuery):
     ])
     buttons.append([
         InlineKeyboardButton(text="🔍 Поиск", callback_data="admin_search"),
-        InlineKeyboardButton(text="🗑️ Пакетно", callback_data="admin_batch")
+        InlineKeyboardButton(text="🗑️ Пакетное удаление", callback_data="admin_batch")
     ])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")])
 
@@ -2919,69 +3032,301 @@ async def admin_del_account(callback: CallbackQuery):
     )
     await callback.answer()
 
+# ========== ПАКЕТНОЕ УДАЛЕНИЕ С ЧЕКБОКСАМИ ==========
 @router.callback_query(F.data == "admin_batch")
 async def admin_batch(callback: CallbackQuery, state: FSMContext):
+    """Пакетное удаление с чекбоксами"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
-    await callback.message.edit_text(
-        "🗑️ <b>Пакетное удаление</b>\n\n"
-        "Введите ID аккаунтов через запятую или пробел:\n"
-        "Пример: 123, 456, 789",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back")]
-        ])
+    accounts = db.get_all_accounts()
+    if not accounts:
+        await callback.answer("📋 Нет аккаунтов для удаления", show_alert=True)
+        return
+
+    # Сохраняем список аккаунтов в состоянии
+    await state.set_state(EditState.batch_selection)
+    await state.update_data(
+        batch_accounts=accounts,
+        batch_selected=set(),
+        batch_page=1
     )
-    await state.set_state(EditState.waiting_batch_delete)
+    
+    await show_batch_page(callback.message, state)
     await callback.answer()
 
-@router.message(EditState.waiting_batch_delete)
-async def process_batch(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await state.clear()
+async def show_batch_page(message: Message, state: FSMContext):
+    """Показывает страницу пакетного удаления с чекбоксами"""
+    data = await state.get_data()
+    accounts = data.get("batch_accounts", [])
+    selected = data.get("batch_selected", set())
+    page = data.get("batch_page", 1)
+    
+    per_page = 10
+    total_pages = (len(accounts) + per_page - 1) // per_page
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    end = min(start + per_page, len(accounts))
+    
+    # Функция проверки заполненности
+    def is_incomplete(acc):
+        required_fields = ['power', 'bm', 'pl1', 'pl2', 'pl3', 'dragon', 'buffs_stands', 'buffs_research']
+        for field in required_fields:
+            value = acc.get(field, '')
+            if not value or value == '—' or value == '':
+                return True
+        return False
+    
+    text = f"🗑️ <b>Пакетное удаление</b> (стр. {page}/{total_pages})\n\n"
+    text += "Отметьте аккаунты для удаления:\n\n"
+    
+    buttons = []
+    
+    # Аккаунты на текущей странице
+    for i, acc in enumerate(accounts[start:end], start + 1):
+        acc_id = acc.get('id')
+        nick = acc.get('game_nickname', '—')
+        if len(nick) > 25:
+            nick = nick[:22] + '...'
+        
+        checkbox = "✅" if acc_id in selected else "⬜"
+        warning = "⚠️ " if is_incomplete(acc) else ""
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{checkbox} {i}. {warning}{nick}",
+                callback_data=f"batch_toggle_{acc_id}"
+            )
+        ])
+    
+    # Навигация
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data="batch_page_prev"))
+    nav_buttons.append(InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data="batch_page_next"))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    # Кнопки управления
+    buttons.append([
+        InlineKeyboardButton(text="✅ Выбрать все", callback_data="batch_select_all"),
+        InlineKeyboardButton(text="⬜ Снять все", callback_data="batch_deselect_all")
+    ])
+    
+    buttons.append([
+        InlineKeyboardButton(text="🗑️ Удалить выбранное", callback_data="batch_delete_selected"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back")
+    ])
+    
+    await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+@router.callback_query(F.data.startswith("batch_toggle_"))
+async def batch_toggle(callback: CallbackQuery, state: FSMContext):
+    """Отметить/снять отметку с аккаунта"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
+    
+    acc_id = int(callback.data.replace("batch_toggle_", ""))
+    
+    data = await state.get_data()
+    selected = data.get("batch_selected", set())
+    
+    if acc_id in selected:
+        selected.remove(acc_id)
+    else:
+        selected.add(acc_id)
+    
+    await state.update_data(batch_selected=selected)
+    await show_batch_page(callback.message, state)
+    await callback.answer()
 
-    ids = list(set(re.findall(r'\d+', message.text)))[:MAX_BATCH_DELETE]
-
-    if not ids:
-        await message.answer("❌ ID не найдены")
-        await state.clear()
+@router.callback_query(F.data == "batch_select_all")
+async def batch_select_all(callback: CallbackQuery, state: FSMContext):
+    """Выбрать все аккаунты на текущей странице"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
+    
+    data = await state.get_data()
+    accounts = data.get("batch_accounts", [])
+    selected = data.get("batch_selected", set())
+    page = data.get("batch_page", 1)
+    
+    per_page = 10
+    start = (page - 1) * per_page
+    end = min(start + per_page, len(accounts))
+    
+    for acc in accounts[start:end]:
+        selected.add(acc.get('id'))
+    
+    await state.update_data(batch_selected=selected)
+    await show_batch_page(callback.message, state)
+    await callback.answer()
 
+@router.callback_query(F.data == "batch_deselect_all")
+async def batch_deselect_all(callback: CallbackQuery, state: FSMContext):
+    """Снять все отметки на текущей странице"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    accounts = data.get("batch_accounts", [])
+    selected = data.get("batch_selected", set())
+    page = data.get("batch_page", 1)
+    
+    per_page = 10
+    start = (page - 1) * per_page
+    end = min(start + per_page, len(accounts))
+    
+    for acc in accounts[start:end]:
+        selected.discard(acc.get('id'))
+    
+    await state.update_data(batch_selected=selected)
+    await show_batch_page(callback.message, state)
+    await callback.answer()
+
+@router.callback_query(F.data == "batch_page_next")
+async def batch_page_next(callback: CallbackQuery, state: FSMContext):
+    """Следующая страница"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    page = data.get("batch_page", 1)
+    await state.update_data(batch_page=page + 1)
+    await show_batch_page(callback.message, state)
+    await callback.answer()
+
+@router.callback_query(F.data == "batch_page_prev")
+async def batch_page_prev(callback: CallbackQuery, state: FSMContext):
+    """Предыдущая страница"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    page = data.get("batch_page", 1)
+    if page > 1:
+        await state.update_data(batch_page=page - 1)
+        await show_batch_page(callback.message, state)
+    await callback.answer()
+
+@router.callback_query(F.data == "batch_delete_selected")
+async def batch_delete_selected(callback: CallbackQuery, state: FSMContext):
+    """Удалить выбранные аккаунты"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    selected = data.get("batch_selected", set())
+    
+    if not selected:
+        await callback.answer("❌ Нет выбранных аккаунтов", show_alert=True)
+        return
+    
+    # Показываем подтверждение
+    accounts_list = []
+    for acc_id in list(selected)[:5]:
+        acc = db.get_account_by_id(acc_id)
+        if acc:
+            accounts_list.append(f"• {acc['game_nickname']} (ID:{acc_id})")
+    
+    text = f"🗑️ <b>Подтверждение удаления</b>\n\n"
+    text += f"Выбрано аккаунтов: {len(selected)}\n\n"
+    if accounts_list:
+        text += "Будут удалены:\n" + "\n".join(accounts_list)
+        if len(selected) > 5:
+            text += f"\n...и еще {len(selected) - 5}"
+    
+    text += f"\n\nВы уверены?"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить все", callback_data="batch_confirm_delete"),
+            InlineKeyboardButton(text="❌ Нет, отмена", callback_data="admin_batch")
+        ]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+@router.callback_query(F.data == "batch_confirm_delete")
+async def batch_confirm_delete(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение массового удаления"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("🚫 Доступ запрещен", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    selected = data.get("batch_selected", set())
+    
+    if not selected:
+        await callback.answer("❌ Нет выбранных аккаунтов", show_alert=True)
+        return
+    
     deleted = []
     failed = []
-    not_found = []
-
-    for id_str in ids:
-        try:
-            acc_id = int(id_str)
-            acc = db.get_account_by_id(acc_id)
-            if acc:
-                if db.delete_account(acc_id):
-                    deleted.append(f"{acc_id} ({acc['game_nickname']})")
-                else:
-                    failed.append(acc_id)
+    incomplete = []
+    
+    def is_incomplete(acc):
+        required_fields = ['power', 'bm', 'pl1', 'pl2', 'pl3', 'dragon', 'buffs_stands', 'buffs_research']
+        for field in required_fields:
+            value = acc.get(field, '')
+            if not value or value == '—' or value == '':
+                return True
+        return False
+    
+    for acc_id in selected:
+        acc = db.get_account_by_id(acc_id)
+        if acc:
+            if is_incomplete(acc):
+                incomplete.append(f"{acc['game_nickname']} (ID:{acc_id})")
+            
+            if db.delete_account(acc_id):
+                deleted.append(f"{acc['game_nickname']} (ID:{acc_id})")
             else:
-                not_found.append(acc_id)
-        except ValueError:
-            failed.append(id_str)
-
-    text = "🗑️ <b>Результат</b>\n\n"
-
+                failed.append(acc_id)
+    
+    # Формируем отчет
+    text = "🗑️ <b>Результат массового удаления</b>\n\n"
+    
     if deleted:
-        text += f"✅ Удалено ({len(deleted)}):\n" + "\n".join(deleted[:10])
+        text += f"✅ Удалено ({len(deleted)}):\n"
+        for item in deleted[:10]:
+            text += f"• {item}\n"
         if len(deleted) > 10:
-            text += f"\n...и еще {len(deleted) - 10}\n"
-
+            text += f"...и еще {len(deleted) - 10}\n"
+        text += "\n"
+    
+    if incomplete:
+        text += f"⚠️ Среди удаленных были неполные ({len(incomplete)}):\n"
+        for item in incomplete[:5]:
+            text += f"• {item}\n"
+        if len(incomplete) > 5:
+            text += f"...и еще {len(incomplete) - 5}\n"
+        text += "\n"
+    
     if failed:
-        text += f"\n❌ Ошибка ({len(failed)}): {', '.join(map(str, failed[:10]))}\n"
-
-    if not_found:
-        text += f"\n🔍 Не найдены ({len(not_found)}): {', '.join(map(str, not_found[:10]))}\n"
-
-    await message.answer(text, reply_markup=get_admin_kb())
+        text += f"❌ Не удалось удалить ({len(failed)}): {', '.join(map(str, failed[:10]))}\n\n"
+    
+    db.invalidate_cache()
     await state.clear()
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_back")]
+        ])
+    )
+    await callback.answer()
 
 @router.callback_query(F.data == "admin_show_delete_menu")
 async def admin_show_delete_menu(callback: CallbackQuery):
@@ -3056,12 +3401,14 @@ async def admin_show_delete_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin_show_delete_menu_page_"))
 async def admin_show_delete_menu_page(callback: CallbackQuery):
+    """Обработка переключения страниц в меню удаления"""
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
     try:
         page = int(callback.data.split("_")[5])
+        print(f"📄 Переход на страницу {page}")
     except:
         page = 1
 
@@ -3150,8 +3497,11 @@ async def admin_search(callback: CallbackQuery, state: FSMContext):
         await callback.answer("🚫 Доступ запрещен", show_alert=True)
         return
 
+    # Очищаем предыдущее состояние
+    await state.clear()
+    
     await callback.message.edit_text(
-        "🔍 <b>Поиск</b>\n\nВведите ник или ID:",
+        "🔍 <b>Поиск</b>\n\nВведите ник или ID для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back")]
         ])
@@ -3161,42 +3511,75 @@ async def admin_search(callback: CallbackQuery, state: FSMContext):
 
 @router.message(EditState.waiting_search_query)
 async def process_search(message: Message, state: FSMContext):
+    """Обработка поискового запроса"""
+    print("\n" + "="*50)
+    print("🔍🔍🔍 process_search ВЫЗВАН! 🔍🔍🔍")
+    print(f"   Текст: '{message.text}'")
+    print(f"   User ID: {message.from_user.id}")
+    print(f"   Is admin: {is_admin(message.from_user.id)}")
+    
+    # Проверяем текущее состояние
+    current_state = await state.get_state()
+    print(f"📊 Текущее состояние FSM: {current_state}")
+    
     if not is_admin(message.from_user.id):
+        print("❌ ДОСТУП ЗАПРЕЩЕН - не админ")
+        await state.clear()
+        return
+
+    if current_state != EditState.waiting_search_query:
+        print(f"❌ Неверное состояние: {current_state}")
         await state.clear()
         return
 
     query = message.text.strip()
+    print(f"📝 Поисковый запрос: '{query}'")
 
     if len(query) < 2:
-        await message.answer("❌ Минимум 2 символа")
+        print("❌ Слишком короткий запрос")
+        await message.answer("❌ Минимум 2 символа для поиска")
         return
 
+    # Получаем все аккаунты
+    print("📊 Получаем все аккаунты из БД...")
     accounts = db.get_all_accounts()
+    print(f"📊 Всего аккаунтов в БД: {len(accounts)}")
+    
     results = []
-
+    
+    # Поиск по нику или ID
     for acc in accounts:
         nick = acc.get('game_nickname', '')
         user_id = str(acc.get('user_id', ''))
+        
         if query.lower() in nick.lower() or query in user_id:
             results.append(acc)
+            print(f"✅ Найдено совпадение: {nick} (ID: {user_id})")
+
+    print(f"📊 Найдено результатов: {len(results)}")
 
     if not results:
-        await message.answer(f"❌ Ничего не найдено: {query}")
+        print("❌ Ничего не найдено")
+        await message.answer(f"❌ Ничего не найдено по запросу: {query}")
         await state.clear()
         return
 
-    text = f"🔍 <b>Результаты:</b> {query}\n\n"
+    # Формируем текст результатов
+    text = f"🔍 <b>Результаты поиска:</b> {query}\n"
+    text += f"Найдено: {len(results)}\n\n"
+    
+    # Показываем первые 10 результатов
     text += format_accounts_table(results[:10])
 
     if len(results) > 10:
         text += f"\n...и еще {len(results) - 10}"
 
+    # Кнопки для быстрого удаления найденных
     buttons = []
     for acc in results[:5]:
         nick = acc.get('game_nickname', '—')
-        if not isinstance(nick, str):
-            nick = str(nick) if nick is not None else '—'
-        nick = html.escape(nick)[:20]
+        if len(nick) > 20:
+            nick = nick[:17] + '...'
         acc_id = acc.get('id')
         if acc_id:
             buttons.append([
@@ -3208,8 +3591,13 @@ async def process_search(message: Message, state: FSMContext):
 
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")])
 
+    print("📤 Отправляем результаты...")
     await safe_send(message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    
+    # Очищаем состояние
     await state.clear()
+    print("✅ Состояние очищено")
+    print("="*50)
 
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
