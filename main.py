@@ -2088,23 +2088,16 @@ async def handle_backup_file(message: Message, state: FSMContext):
 
 # ========== ОБЩИЙ ХЕНДЛЕР ==========
 @router.message(F.chat.type == "private")
-async def debug_all_messages(message: Message, state: FSMContext):
-    """Отладка всех сообщений - ВРЕМЕННО"""
-    current_state = await state.get_state()
-    print(f"\n📨📨📨 ВСЕ СООБЩЕНИЯ 📨📨📨")
-    print(f"   Текст: '{message.text}'")
-    print(f"   User ID: {message.from_user.id}")
-    print(f"   Текущее состояние FSM: {current_state}")
-    
-    # Если есть активное состояние, но это не поиск - пропускаем
-    if current_state and current_state != EditState.waiting_search_query:
-        print(f"⚠️ Активное состояние: {current_state}")
-    
-    # Не мешаем работе других обработчиков - пропускаем сообщение дальше
-    # Этот обработчик только логирует
-
 async def any_message(message: Message, state: FSMContext):
     current_state = await state.get_state()
+    print(f"📨 any_message: state={current_state}, text='{message.text}'")
+    
+    if current_state == EditState.waiting_search_query:
+        print("⚠️ Состояние поиска, но обработчик не сработал!")
+        # Принудительно вызываем обработчик поиска
+        await process_search(message, state)
+        return
+    
     if current_state is not None:
         return
 
@@ -4009,4 +4002,5 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
+
 
