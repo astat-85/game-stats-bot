@@ -3,7 +3,7 @@
 """
 import json
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
 class CityDatabase:
@@ -61,4 +61,76 @@ class CityDatabase:
         
         return results
     
-    def
+    def get_unique_cities(self, query: str) -> Tuple[List[Dict], bool]:
+        """
+        Возвращает (список городов, уникальны_ли)
+        Если город один - True, если несколько - False
+        """
+        results = self.search(query)
+        return results, len(results) == 1
+    
+    def get_city_by_name_and_region(self, name: str, region: str) -> Optional[Dict]:
+        """
+        Получить конкретный город по названию и региону
+        """
+        name = name.lower().strip()
+        region = region.lower().strip()
+        
+        for city in self.cities:
+            city_name = city.get('name', '').lower()
+            city_region = city.get('region', {}).get('name', '').lower()
+            
+            if city_name == name and city_region == region:
+                return city
+        
+        return None
+    
+    def get_all_cities(self) -> List[Dict]:
+        """
+        Возвращает весь список городов
+        """
+        return self.cities.copy()
+    
+    def get_cities_by_region(self, region: str) -> List[Dict]:
+        """
+        Возвращает все города в указанном регионе
+        """
+        region = region.lower().strip()
+        results = []
+        
+        for city in self.cities:
+            city_region = city.get('region', {}).get('name', '').lower()
+            if region in city_region:
+                results.append(city)
+        
+        return results
+    
+    def get_timezone_for_city(self, city_name: str, region_name: str = None) -> Optional[str]:
+        """
+        Получает часовой пояс для города
+        Если город неуникальный, требуется указать регион
+        """
+        if region_name:
+            city = self.get_city_by_name_and_region(city_name, region_name)
+            if city:
+                return city.get('timezone', {}).get('tzid')
+        else:
+            # Ищем все города с таким названием
+            cities = self.search(city_name)
+            if len(cities) == 1:
+                return cities[0].get('timezone', {}).get('tzid')
+            elif len(cities) > 1:
+                # Несколько городов - нужен регион
+                return None
+        
+        return None
+    
+    def format_city_for_display(self, city: Dict) -> str:
+        """
+        Форматирует город для отображения пользователю
+        """
+        name = city.get('name', '')
+        region = city.get('region', {}).get('name', '')
+        timezone = city.get('timezone', {}).get('tzid', '').replace('Europe/', '').replace('Asia/', '')
+        
+        return f"{name}, {region} ({timezone})"
