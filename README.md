@@ -1,4 +1,4 @@
-# Game Stats Bot
+# game-KFC-bot
 
 Telegram bot for collecting game statistics.
 
