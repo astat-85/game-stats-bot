@@ -112,6 +112,9 @@ from handlers import profile
 from database.profile_db import ProfileDB
 from cities.city_db import CityDatabase
 
+# ========== ГЛОБАЛЬНЫЕ ССЫЛКИ ==========
+_check_subscription_func = None
+
     import aiogram
     if aiogram.__version__.startswith('3'):
         try:
@@ -1363,12 +1366,13 @@ async def safe_send(obj, text: str, **kwargs):
 
 # ========== ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ ==========
 async def check_subscription(user_id: int) -> bool:
-    global _check_subscription_func
-    _check_subscription_func = check_subscription
     """
     Проверяет, подписан ли пользователь на целевую группу
     Возвращает True если подписан, False если нет
     """
+    global _check_subscription_func
+    _check_subscription_func = check_subscription
+    
     if not TARGET_CHAT_ID:
         # Если группа не настроена - разрешаем доступ
         print("⚠️ TARGET_CHAT_ID не настроен, проверка подписки отключена")
