@@ -106,14 +106,6 @@ try:
     from aiogram.exceptions import TelegramBadRequest
     from aiogram.types.error_event import ErrorEvent
     from aiogram.enums import ParseMode
-    
-# ========== НОВЫЕ ИМПОРТЫ ДЛЯ ПРОФИЛЯ ==========
-from handlers import profile
-from database.profile_db import ProfileDB
-from cities.city_db import CityDatabase
-
-# ========== ГЛОБАЛЬНЫЕ ССЫЛКИ ==========
-_check_subscription_func = None
 
     import aiogram
     if aiogram.__version__.startswith('3'):
@@ -1032,18 +1024,11 @@ class Database:
 
 db = Database()
 
-# ========== ИНИЦИАЛИЗАЦИЯ МОДУЛЕЙ ПРОФИЛЯ ==========
-profile_db = ProfileDB(db)
-city_db = CityDatabase()
-
 # ========== FSM ==========
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 router = Router()
 dp.include_router(router)
-
-# ========== ПОДКЛЮЧЕНИЕ РОУТЕРА ПРОФИЛЯ ==========
-dp.include_router(profile.router)
 
 class EditState(StatesGroup):
     waiting_field_value = State()
@@ -1059,8 +1044,7 @@ def is_admin(user_id: int) -> bool:
 
 def get_main_kb(user_id: int) -> ReplyKeyboardMarkup:
     kb = [
-        [KeyboardButton(text="📊 Мои аккаунты"), KeyboardButton(text="📤 Отправить в группу")],
-        [KeyboardButton(text="👤 Мой профиль")]
+        [KeyboardButton(text="📊 Мои аккаунты"), KeyboardButton(text="📤 Отправить в группу")]
     ]
     if is_admin(user_id):
         kb.append([KeyboardButton(text="👑 Админ-панель")])
@@ -1370,9 +1354,6 @@ async def check_subscription(user_id: int) -> bool:
     Проверяет, подписан ли пользователь на целевую группу
     Возвращает True если подписан, False если нет
     """
-    global _check_subscription_func
-    _check_subscription_func = check_subscription
-    
     if not TARGET_CHAT_ID:
         # Если группа не настроена - разрешаем доступ
         print("⚠️ TARGET_CHAT_ID не настроен, проверка подписки отключена")
@@ -1512,13 +1493,7 @@ async def my_accounts(message: Message):
 
     text = "<b>📋 Ваши аккаунты:</b>\n\n" + format_accounts_table(accounts)
     await safe_send(message, text, reply_markup=get_accounts_kb(accounts))
-    
-@router.message(F.text == "👤 Мой профиль")
-async def my_profile_button(message: Message, state: FSMContext):
-    """Обработка кнопки Мой профиль"""
-    from handlers.profile import cmd_profile
-    await cmd_profile(message)
-    
+
 @router.message(F.text == "📤 Отправить в группу")
 async def send_menu(message: Message):
     if not TARGET_CHAT_ID:
@@ -4027,4 +4002,3 @@ if __name__ == "__main__":
         except:
             pass
         print("👋 Завершение работы")
-
